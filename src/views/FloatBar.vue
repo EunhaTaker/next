@@ -51,11 +51,10 @@
           </div>
           <div class="float-item-info">
             <span class="float-item-title">{{ task.title }}</span>
-            <div class="float-item-meta" v-if="task.dueDate || task.desktopId">
-              <span v-if="task.dueDate" class="meta-due" :class="{ overdue: isOverdue(task.dueDate) }">
+            <div class="float-item-meta" v-if="task.dueDate">
+              <span class="meta-due" :class="{ overdue: isOverdue(task.dueDate) }">
                 📅 {{ formatDate(task.dueDate) }}
               </span>
-              <span v-if="task.desktopId" class="meta-desktop">🖥 桌面 {{ task.desktopId }}</span>
             </div>
           </div>
         </div>
@@ -228,7 +227,7 @@ async function openMain() {
       width: 720,
       height: 560,
       center: true,
-      decorations: true,
+      decorations: false,
     });
   } catch (e) {
     console.error("openMain failed:", e);
@@ -318,11 +317,15 @@ function isOverdue(d: string) {
 .float-item {
   display: flex;
   align-items: center;
+  box-sizing: border-box;
   gap: 2px;
+  height: 49px;
+  flex-shrink: 0;
   padding: 6px 8px 6px 6px;
   border: 1px solid transparent;
   border-bottom: 1px solid rgba(197, 175, 164, 0.3);
   transition: all var(--transition);
+  overflow: hidden;
 }
 .float-item:hover { background: rgba(197, 175, 164, 0.12); }
 .float-item.completed { opacity: 0.45; }
@@ -410,11 +413,16 @@ function isOverdue(d: string) {
 .float-item-meta {
   display: flex;
   gap: 6px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  overflow: hidden;
 }
 .meta-due, .meta-desktop {
   font-size: 10px;
   color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 1;
 }
 .meta-due.overdue { color: var(--danger); }
 

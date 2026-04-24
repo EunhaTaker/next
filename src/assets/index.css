@@ -179,7 +179,9 @@ html, body, #app {
   box-shadow: var(--shadow-popover);
   width: 480px;
   max-width: 95vw;
-  overflow: hidden;
+  max-height: 85vh; /* 适配主界面高度 */
+  display: flex;
+  flex-direction: column;
 }
 .modal-header {
   padding: 18px 20px 14px;
@@ -189,7 +191,7 @@ html, body, #app {
   justify-content: space-between;
 }
 .modal-title { font-size: 15px; font-weight: 600; color: var(--text-primary); }
-.modal-body { padding: 20px; display: flex; flex-direction: column; gap: 14px; }
+.modal-body { padding: 20px; display: flex; flex-direction: column; gap: 14px; overflow-y: auto; flex: 1; }
 .modal-footer {
   padding: 14px 20px;
   border-top: 1px solid var(--border);

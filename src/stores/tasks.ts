@@ -18,8 +18,15 @@ export interface Task {
   completed: boolean;
 }
 
+export interface DesktopInfo {
+  index: number;
+  name: string;
+  is_current: boolean;
+}
+
 export const useTaskStore = defineStore("tasks", () => {
   const tasks = ref<Task[]>([]);
+  const desktops = ref<DesktopInfo[]>([]);
   const focusIds = ref<string[]>([]); // 专注任务 id 列表（有序）
   const selectedIndex = ref<number | null>(null); // 当前高亮选中的任务索引
   let storeInstance: Awaited<ReturnType<typeof load>> | null = null;
@@ -37,6 +44,13 @@ export const useTaskStore = defineStore("tasks", () => {
       _unlistenSync = await listen<void>("tasks-updated", async () => {
         await reload();
       });
+    }
+
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      desktops.value = await invoke<DesktopInfo[]>("get_desktops");
+    } catch {
+      // 首次加载桌面失败忽略
     }
   }
 
@@ -142,6 +156,12 @@ export const useTaskStore = defineStore("tasks", () => {
     selectedIndex.value = Math.max(0, Math.min(index, max));
   }
 
+  function getDesktopName(id?: number): string {
+    if (id === undefined) return "";
+    const d = desktops.value.find(x => x.index === id);
+    return d ? d.name : `桌面 ${id}`;
+  }
+
   // ── 计算属性 ──
   const pendingTasks = computed(() =>
     tasks.value.filter((t) => !t.completed)
@@ -194,5 +214,7 @@ export const useTaskStore = defineStore("tasks", () => {
     reorderFocus,
     selectedIndex,
     setSelectedIndex,
+    desktops,
+    getDesktopName,
   };
 });

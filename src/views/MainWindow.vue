@@ -1,5 +1,26 @@
 <template>
   <div class="main-root">
+    <!-- 自定义标题栏 (拖拽区) -->
+    <div class="custom-titlebar" data-tauri-drag-region>
+      <div class="titlebar-controls" @mousedown.stop>
+        <button class="titlebar-btn" title="最小化" @click="minimizeWindow">
+          <svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor">
+            <path d="M1 5.5h9" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+        </button>
+        <button class="titlebar-btn" title="最大化/还原" @click="maximizeWindow">
+          <svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor">
+            <path d="M3 3V1h7v7H8" stroke-width="1.5" stroke-linejoin="round"/>
+            <rect x="1" y="3" width="7" height="7" stroke-width="1.5" stroke-linejoin="round"/>
+          </svg>
+        </button>
+        <button class="titlebar-btn close-btn" title="关闭" @click="closeWindow">
+          <svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor">
+            <path d="M2 2l7 7m0-7L2 9" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </div>
+    </div>
     <!-- 侧边栏 -->
     <aside class="sidebar">
       <div class="sidebar-brand">
@@ -121,7 +142,7 @@
                 <span v-if="task.dueDate" class="task-card-due" :class="{ overdue: isOverdue(task.dueDate) }">
                   📅 {{ formatDate(task.dueDate) }}
                 </span>
-                <span v-if="task.desktopId" class="task-card-desktop">🖥 桌面 {{ task.desktopId }}</span>
+                <span v-if="task.desktopId !== undefined" class="task-card-desktop">🖥 {{ store.getDesktopName(task.desktopId) }}</span>
               </div>
               <p v-if="task.description" class="task-card-desc">{{ task.description }}</p>
             </div>
@@ -155,9 +176,16 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from "vue";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useTaskStore } from "../stores/tasks";
 import TaskEditor from "../components/TaskEditor.vue";
 import type { Task, Level } from "../stores/tasks";
+
+const appWindow = getCurrentWindow();
+
+function minimizeWindow() { appWindow.minimize().catch(console.error); }
+function maximizeWindow() { appWindow.toggleMaximize().catch(console.error); }
+function closeWindow() { appWindow.close().catch(console.error); }
 
 const store = useTaskStore();
 const view = ref<"quadrant" | "focus" | "all" | "done">("quadrant");
@@ -233,6 +261,47 @@ function isOverdue(d: string) {
   height: 100vh;
   background: var(--bg-base);
   overflow: hidden;
+  position: relative;
+}
+
+/* ─ 自定义标题栏 ─ */
+.custom-titlebar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 32px;
+  background: transparent;
+  display: flex;
+  justify-content: flex-end;
+  z-index: 9999;
+}
+.titlebar-controls {
+  display: flex;
+}
+.titlebar-btn {
+  width: 48px;
+  height: 32px;
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s;
+  outline: none;
+}
+.titlebar-btn svg {
+  display: block;
+}
+.titlebar-btn:hover {
+  background: rgba(197, 175, 164, 0.2);
+  color: var(--text-primary);
+}
+.titlebar-btn.close-btn:hover {
+  background: #e81123;
+  color: #fff;
 }
 
 /* ─ 侧边栏 ─ */
@@ -247,7 +316,7 @@ function isOverdue(d: string) {
 }
 
 .sidebar-brand {
-  padding: 20px 16px 16px;
+  padding: 34px 16px 16px;
   border-bottom: 1px solid var(--border);
   display: flex;
   flex-direction: column;
@@ -314,7 +383,7 @@ function isOverdue(d: string) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 18px 24px 14px;
+  padding: 34px 40px 16px 40px;
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }

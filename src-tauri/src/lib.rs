@@ -90,7 +90,7 @@ fn create_main_window(app: &tauri::AppHandle) {
         .inner_size(720.0, 560.0)
         .center()
         .resizable(true)
-        .decorations(true)
+        .decorations(false)
         .build();
 }
 
