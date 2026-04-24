@@ -21,6 +21,7 @@ export interface Task {
 export const useTaskStore = defineStore("tasks", () => {
   const tasks = ref<Task[]>([]);
   const focusIds = ref<string[]>([]); // 专注任务 id 列表（有序）
+  const selectedIndex = ref<number | null>(null); // 当前高亮选中的任务索引
   let storeInstance: Awaited<ReturnType<typeof load>> | null = null;
   let _unlistenSync: UnlistenFn | null = null;
 
@@ -128,6 +129,19 @@ export const useTaskStore = defineStore("tasks", () => {
     persist();
   }
 
+  function setSelectedIndex(index: number | null) {
+    if (index === null) {
+      selectedIndex.value = null;
+      return;
+    }
+    if (focusIds.value.length === 0) {
+      selectedIndex.value = null;
+      return;
+    }
+    const max = focusIds.value.length - 1;
+    selectedIndex.value = Math.max(0, Math.min(index, max));
+  }
+
   // ── 计算属性 ──
   const pendingTasks = computed(() =>
     tasks.value.filter((t) => !t.completed)
@@ -178,5 +192,7 @@ export const useTaskStore = defineStore("tasks", () => {
     moveFocus,
     pinToTop,
     reorderFocus,
+    selectedIndex,
+    setSelectedIndex,
   };
 });

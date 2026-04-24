@@ -17,7 +17,7 @@
         v-for="(task, idx) in store.focusTasks"
         :key="task.id"
         class="float-item fade-up"
-        :class="{ completed: task.completed }"
+        :class="{ completed: task.completed, selected: store.selectedIndex === idx }"
         :style="{ animationDelay: `${idx * 0.04}s` }"
       >
         <!-- 上移 / 下移 按钮 -->
@@ -94,7 +94,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch } from "vue";
+import { ref, onMounted, onUnmounted, watch } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { invoke } from "@tauri-apps/api/core";
@@ -106,6 +106,71 @@ const store = useTaskStore();
 const showPicker = ref(false);
 const side = ref<'left' | 'right'>('right');
 
+let dClickTimer: ReturnType<typeof setTimeout> | null = null;
+let dClickCount = 0;
+
+function handleKeydown(e: KeyboardEvent) {
+  if (store.focusTasks.length === 0) return;
+
+  if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+    e.preventDefault();
+    const isAlt = e.altKey;
+    const isUp = e.key === "ArrowUp";
+
+    if (isAlt) {
+      if (store.selectedIndex === null) return;
+      const id = store.focusTasks[store.selectedIndex].id;
+      if (isUp && store.selectedIndex > 0) {
+        store.moveFocus(id, "up");
+        store.setSelectedIndex(store.selectedIndex - 1);
+      } else if (!isUp && store.selectedIndex < store.focusTasks.length - 1) {
+        store.moveFocus(id, "down");
+        store.setSelectedIndex(store.selectedIndex + 1);
+      }
+    } else {
+      let newIdx = store.selectedIndex ?? (isUp ? store.focusTasks.length - 1 : 0);
+      if (store.selectedIndex !== null) {
+        newIdx = isUp ? Math.max(0, newIdx - 1) : Math.min(store.focusTasks.length - 1, newIdx + 1);
+      }
+      store.setSelectedIndex(newIdx);
+      
+      // Auto scroll logic
+      const activeEl = document.querySelector(".float-item.selected");
+      if (activeEl) {
+        activeEl.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      }
+    }
+    return;
+  }
+
+  if (store.selectedIndex !== null && store.focusTasks[store.selectedIndex]) {
+    const task = store.focusTasks[store.selectedIndex];
+    if (e.key === "c") {
+      e.preventDefault();
+      store.removeFromFocus(task.id);
+      if (store.selectedIndex >= store.focusTasks.length) {
+        store.setSelectedIndex(store.focusTasks.length > 0 ? store.focusTasks.length - 1 : null);
+      }
+    } else if (e.key === "d") {
+      e.preventDefault();
+      dClickCount++;
+      if (dClickTimer) clearTimeout(dClickTimer);
+
+      if (dClickCount >= 2) {
+        store.toggleComplete(task.id);
+        dClickCount = 0;
+      } else {
+        dClickTimer = setTimeout(() => {
+          if (dClickCount === 1 && task.desktopId !== undefined) {
+            invoke("switch_to_desktop", { index: task.desktopId }).catch(console.error);
+          }
+          dClickCount = 0;
+        }, 400); // 双击等待阈值
+      }
+    }
+  }
+}
+
 onMounted(() => {
   document.documentElement.style.background = 'transparent';
   document.body.style.background = 'transparent';
@@ -114,6 +179,12 @@ onMounted(() => {
   store.init();
   // 初始化后调整一次
   adjustHeight(store.focusTasks.length);
+
+  window.addEventListener("keydown", handleKeydown);
+});
+
+onUnmounted(() => {
+  window.removeEventListener("keydown", handleKeydown);
 });
 
 // 精确高度常量（逻辑像素）
@@ -249,11 +320,18 @@ function isOverdue(d: string) {
   align-items: center;
   gap: 2px;
   padding: 6px 8px 6px 6px;
+  border: 1px solid transparent;
   border-bottom: 1px solid rgba(197, 175, 164, 0.3);
-  transition: background var(--transition);
+  transition: all var(--transition);
 }
 .float-item:hover { background: rgba(197, 175, 164, 0.12); }
 .float-item.completed { opacity: 0.45; }
+.float-item.selected {
+  background: rgba(197, 175, 164, 0.15);
+  border-radius: var(--radius-sm);
+  border-color: var(--dusty-rose);
+  transform: translateX(2px);
+}
 
 /* 上移下移按钮组——竖直排列 */
 .move-btns {

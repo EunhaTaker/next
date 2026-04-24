@@ -110,6 +110,19 @@ fn hide_float_window(app: tauri::AppHandle) {
 fn show_float_window(app: tauri::AppHandle) {
     if let Some(win) = app.get_webview_window("float") {
         let _ = win.show();
+        let _ = win.set_focus();
+    }
+}
+
+#[tauri::command]
+fn toggle_float_window(app: tauri::AppHandle) {
+    if let Some(win) = app.get_webview_window("float") {
+        if win.is_visible().unwrap_or(false) {
+            let _ = win.hide();
+        } else {
+            let _ = win.show();
+            let _ = win.set_focus();
+        }
     }
 }
 
@@ -130,7 +143,9 @@ fn resize_float_window(app: tauri::AppHandle, height: u32) {
 /// 将悬浮窗贴靠到左侧或右侧屏幕边缘，保留当前 Y 位置
 #[tauri::command]
 fn snap_float_window(app: tauri::AppHandle, side: String) {
-    let Some(win) = app.get_webview_window("float") else { return };
+    let Some(win) = app.get_webview_window("float") else {
+        return;
+    };
 
     let monitor = app
         .primary_monitor()
@@ -169,7 +184,6 @@ fn snap_float_window(app: tauri::AppHandle, side: String) {
     }));
 }
 
-
 #[tauri::command]
 fn get_desktops() -> Vec<DesktopInfo> {
     let current_idx = winvd::get_current_desktop()
@@ -205,9 +219,9 @@ fn rename_desktop(index: usize, name: String) -> Result<(), String> {
         .map_err(|e| format!("{:?}", e))
 }
 
-
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .setup(|app| {
@@ -276,6 +290,7 @@ pub fn run() {
             show_main_window,
             hide_float_window,
             show_float_window,
+            toggle_float_window,
             resize_float_window,
             snap_float_window,
             get_desktops,
