@@ -44,9 +44,9 @@
           title="置顶"
         >⇈</button>
 
-        <!-- 任务内容 -->
-        <div class="float-item-content" @click="toggleComplete(task)">
-          <div class="float-item-check" :class="{ done: task.completed }">
+        <!-- 任务内容 - 点击选中/取消选中 -->
+        <div class="float-item-content" @click="toggleSelect(idx)">
+          <div class="float-item-check" :class="{ done: task.completed }" @click.stop="toggleComplete(task)">
             <span v-if="task.completed">✓</span>
           </div>
           <div class="float-item-info">
@@ -145,6 +145,12 @@ let dClickTimer: ReturnType<typeof setTimeout> | null = null;
 let dClickCount = 0;
 
 function handleKeydown(e: KeyboardEvent) {
+  // ESC 取消选中
+  if (e.key === "Escape") {
+    store.setSelectedIndex(null);
+    return;
+  }
+
   if (store.focusTasks.length === 0) return;
 
   if (e.key === "ArrowUp" || e.key === "ArrowDown") {
@@ -280,6 +286,14 @@ function hideFloat() {
 
 function toggleComplete(task: Task) {
   store.toggleComplete(task.id);
+}
+
+function toggleSelect(idx: number) {
+  if (store.selectedIndex === idx) {
+    store.setSelectedIndex(null);
+  } else {
+    store.setSelectedIndex(idx);
+  }
 }
 
 function switchDesktop(desktopId: number) {

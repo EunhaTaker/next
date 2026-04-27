@@ -55,10 +55,12 @@ fn create_float_window(app: &tauri::AppHandle) {
         .transparent(true)
         .build()
     {
-        // 用 Win32 SetWindowRgn 把窗口裁剪为圆角矩形
-        // 圆角外部区域完全透明（OS 层级），无需依赖 WebView2 透明
+        // 用 Win32 SetWindowLongW 强制隐藏浮动窗的任务栏图标
         #[cfg(target_os = "windows")]
         apply_round_region(&win, win_w, win_h, 14);
+
+        #[cfg(target_os = "windows")]
+        apply_taskbar_hide(&win);
     }
 }
 
@@ -74,6 +76,29 @@ fn apply_round_region(win: &tauri::WebviewWindow, width: u32, height: u32, radiu
             // cx/cy 是椭圆直径（=半径*2）
             let rgn = CreateRoundRectRgn(0, 0, width as i32, height as i32, radius * 2, radius * 2);
             SetWindowRgn(hwnd.0 as isize, rgn, 1);
+        }
+    }
+}
+
+/// 通过 Win32 SetWindowLongW 强制清除 WS_EX_APPWINDOW、设置 WS_EX_TOOLWINDOW
+/// 这是在 Windows 上彻底隐藏任务栏图标的标准方法（skip_taskbar 有时不可靠）
+#[cfg(target_os = "windows")]
+fn apply_taskbar_hide(win: &tauri::WebviewWindow) {
+    extern "system" {
+        fn GetWindowLongW(hwnd: isize, n_index: i32) -> i32;
+        fn SetWindowLongW(hwnd: isize, n_index: i32, dw_new_long: i32) -> i32;
+    }
+    const GWL_EXSTYLE: i32 = -20;
+    const WS_EX_TOOLWINDOW: i32 = 0x0000_0080;
+    const WS_EX_APPWINDOW: i32 = 0x0004_0000;
+    if let Ok(hwnd) = win.hwnd() {
+        unsafe {
+            let ex = GetWindowLongW(hwnd.0 as isize, GWL_EXSTYLE);
+            SetWindowLongW(
+                hwnd.0 as isize,
+                GWL_EXSTYLE,
+                (ex | WS_EX_TOOLWINDOW) & !WS_EX_APPWINDOW,
+            );
         }
     }
 }
