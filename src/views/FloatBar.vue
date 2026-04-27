@@ -103,6 +103,42 @@ import type { Task } from "../stores/tasks";
 
 const store = useTaskStore();
 const showPicker = ref(false);
+
+// ── 番茄钟 ──
+let pomodoroIntervalId: ReturnType<typeof setInterval> | null = null;
+let pomodoroPollId: ReturnType<typeof setInterval> | null = null;
+let pomodoroEndTime = 0;
+
+function stopPomodoroPoll() {
+  if (pomodoroPollId) { clearInterval(pomodoroPollId); pomodoroPollId = null; }
+}
+
+function triggerPomodoro() {
+  // 仅显示窗口，不抢夺焦点
+  invoke("show_float_window_passive").catch(() => {});
+
+  stopPomodoroPoll();
+  pomodoroEndTime = Date.now() + Math.max(1, store.pomodoroDuration) * 1000;
+  // 用 Date.now() 轮询代替 setTimeout，避免 WebView2 后台节流
+  pomodoroPollId = setInterval(() => {
+    if (Date.now() >= pomodoroEndTime) {
+      invoke("hide_float_window").catch(() => {});
+      stopPomodoroPoll();
+    }
+  }, 200);
+}
+
+function setupPomodoro() {
+  if (pomodoroIntervalId) { clearInterval(pomodoroIntervalId); pomodoroIntervalId = null; }
+  stopPomodoroPoll();
+
+  const intervalMin = store.pomodoroInterval;
+  if (intervalMin > 0) {
+    pomodoroIntervalId = setInterval(triggerPomodoro, intervalMin * 60 * 1000);
+  }
+}
+
+watch(() => store.pomodoroInterval, setupPomodoro);
 const side = ref<'left' | 'right'>('right');
 
 let dClickTimer: ReturnType<typeof setTimeout> | null = null;
@@ -175,7 +211,7 @@ onMounted(() => {
   document.body.style.background = 'transparent';
   const app = document.getElementById('app');
   if (app) app.style.background = 'transparent';
-  store.init();
+  store.init().then(() => setupPomodoro());
   // 初始化后调整一次
   adjustHeight(store.focusTasks.length);
 
@@ -183,6 +219,8 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  if (pomodoroIntervalId) clearInterval(pomodoroIntervalId);
+  stopPomodoroPoll();
   window.removeEventListener("keydown", handleKeydown);
 });
 
@@ -470,5 +508,45 @@ function isOverdue(d: string) {
   font-size: 20px;
   font-weight: 300;
   line-height: 1;
+}
+
+/* ── 番茄钟遮罩 ── */
+.pomodoro-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(228, 222, 218, 0.92);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 14px;
+  cursor: pointer;
+}
+.pomodoro-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  text-align: center;
+}
+.pomodoro-icon { font-size: 42px; margin-bottom: 4px; }
+.pomodoro-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+.pomodoro-desc {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.pomodoro-fade-enter-active, .pomodoro-fade-leave-active {
+  transition: opacity 0.35s ease;
+}
+.pomodoro-fade-enter-from, .pomodoro-fade-leave-to {
+  opacity: 0;
 }
 </style>

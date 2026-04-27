@@ -29,6 +29,8 @@ export const useTaskStore = defineStore("tasks", () => {
   const desktops = ref<DesktopInfo[]>([]);
   const focusIds = ref<string[]>([]); // 专注任务 id 列表（有序）
   const selectedIndex = ref<number | null>(null); // 当前高亮选中的任务索引
+  const pomodoroInterval = ref(25); // 默认25分钟
+  const pomodoroDuration = ref(5);  // 默认5秒
   let storeInstance: Awaited<ReturnType<typeof load>> | null = null;
   let _unlistenSync: UnlistenFn | null = null;
 
@@ -58,14 +60,20 @@ export const useTaskStore = defineStore("tasks", () => {
     if (!storeInstance) return;
     const savedTasks = await storeInstance.get<Task[]>("tasks");
     const savedFocus = await storeInstance.get<string[]>("focusIds");
+    const savedPomodoro = await storeInstance.get<{ interval: number; duration: number }>("pomodoro");
     if (savedTasks) tasks.value = savedTasks;
     if (savedFocus) focusIds.value = savedFocus;
+    if (savedPomodoro) {
+      pomodoroInterval.value = savedPomodoro.interval;
+      pomodoroDuration.value = savedPomodoro.duration;
+    }
   }
 
   async function persist() {
     if (!storeInstance) return;
     await storeInstance.set("tasks", tasks.value);
     await storeInstance.set("focusIds", focusIds.value);
+    await storeInstance.set("pomodoro", { interval: pomodoroInterval.value, duration: pomodoroDuration.value });
     await storeInstance.save();
     // 通知所有窗口数据已更新
     emit("tasks-updated").catch(() => {});
@@ -162,6 +170,12 @@ export const useTaskStore = defineStore("tasks", () => {
     return d ? d.name : `桌面 ${id}`;
   }
 
+  async function savePomodoroSettings(interval: number, duration: number) {
+    pomodoroInterval.value = interval;
+    pomodoroDuration.value = duration;
+    await persist();
+  }
+
   // ── 计算属性 ──
   const pendingTasks = computed(() =>
     tasks.value.filter((t) => !t.completed)
@@ -216,5 +230,8 @@ export const useTaskStore = defineStore("tasks", () => {
     setSelectedIndex,
     desktops,
     getDesktopName,
+    pomodoroInterval,
+    pomodoroDuration,
+    savePomodoroSettings,
   };
 });

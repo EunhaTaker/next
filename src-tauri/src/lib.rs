@@ -114,6 +114,15 @@ fn show_float_window(app: tauri::AppHandle) {
     }
 }
 
+/// 显示悬浮窗但不抢占系统焦点（番茄钟等被动弹出场景使用）
+#[tauri::command]
+fn show_float_window_passive(app: tauri::AppHandle) {
+    if let Some(win) = app.get_webview_window("float") {
+        let _ = win.show();
+        // 不调用 set_focus()，让当前活动窗口保持焦点
+    }
+}
+
 #[tauri::command]
 fn toggle_float_window(app: tauri::AppHandle) {
     if let Some(win) = app.get_webview_window("float") {
@@ -290,6 +299,7 @@ pub fn run() {
             show_main_window,
             hide_float_window,
             show_float_window,
+            show_float_window_passive,
             toggle_float_window,
             resize_float_window,
             snap_float_window,

@@ -59,6 +59,16 @@
           <span class="nav-icon">✓</span> 已完成
         </button>
       </nav>
+      <div style="flex: 1;"></div>
+      <nav class="sidebar-nav">
+        <button
+          class="nav-item"
+          :class="{ active: view === 'settings' }"
+          @click="view = 'settings'"
+        >
+          <span class="nav-icon">⚙</span> 设置
+        </button>
+      </nav>
     </aside>
 
     <!-- 主内容 -->
@@ -120,7 +130,7 @@
       </div>
 
       <!-- 专注任务 / 全部 / 已完成 视图 -->
-      <div v-else class="task-list-view">
+      <div v-else-if="view !== 'settings'" class="task-list-view">
         <div
           v-for="task in listViewTasks"
           :key="task.id"
@@ -162,6 +172,42 @@
           <span>暂无任务</span>
         </div>
       </div>
+
+      <!-- 设置视图 -->
+      <div v-if="view === 'settings'" class="settings-view fade-up">
+        <div class="settings-card fullscreen">
+          <h2 class="settings-section-title">⏱ 番茄土豆</h2>
+          
+          <div class="settings-form">
+            <div class="field">
+              <label>每隔多少分钟显示一次悬浮窗？（0 为关闭功能）</label>
+              <input 
+                type="number" 
+                class="input" 
+                min="0" 
+                v-model.number="tempInterval" 
+                @blur="saveSettings"
+                @keyup.enter="saveSettings" 
+              />
+            </div>
+            <div class="field">
+              <label>不聚焦时，多少秒后自动隐藏悬浮窗？</label>
+              <input 
+                type="number" 
+                class="input" 
+                min="1" 
+                v-model.number="tempDuration" 
+                @blur="saveSettings"
+                @keyup.enter="saveSettings"
+              />
+            </div>
+          </div>
+          <div class="settings-actions">
+            <span class="hint" v-if="saveHint">{{ saveHint }}</span>
+            <button class="btn btn-primary" @click="saveSettings">保存设置</button>
+          </div>
+        </div>
+      </div>
     </main>
 
     <!-- TaskEditor Modal -->
@@ -188,17 +234,27 @@ function maximizeWindow() { appWindow.toggleMaximize().catch(console.error); }
 function closeWindow() { appWindow.close().catch(console.error); }
 
 const store = useTaskStore();
-const view = ref<"quadrant" | "focus" | "all" | "done">("quadrant");
+const view = ref<"quadrant" | "focus" | "all" | "done" | "settings">("quadrant");
 const editorOpen = ref(false);
 const editingTask = ref<Task | null>(null);
 
-onMounted(() => store.init());
+// Settings state
+const tempInterval = ref(25);
+const tempDuration = ref(5);
+const saveHint = ref("");
+
+onMounted(async () => {
+  await store.init();
+  tempInterval.value = store.pomodoroInterval;
+  tempDuration.value = store.pomodoroDuration;
+});
 
 const viewTitle = computed(() => ({
   quadrant: "四象限视图",
   focus: "专注任务",
   all: "全部任务",
   done: "已完成",
+  settings: "应用设置"
 }[view.value]));
 
 const listViewTasks = computed(() => {
@@ -217,6 +273,12 @@ const quadrantDefs = [
 function openCreate() {
   editingTask.value = null;
   editorOpen.value = true;
+}
+
+async function saveSettings() {
+  await store.savePomodoroSettings(tempInterval.value, tempDuration.value);
+  saveHint.value = "已保存";
+  setTimeout(() => { saveHint.value = ""; }, 2000);
 }
 
 function openEdit(task: Task) {
@@ -574,5 +636,46 @@ function isOverdue(d: string) {
   color: var(--text-muted);
   font-size: 14px;
 }
-.empty-icon { font-size: 36px; }
+.empty-icon {
+  font-size: 36px;
+  margin-bottom: 8px;
+  opacity: 0.5;
+}
+
+/* ─ 设置视图 ─ */
+.settings-view {
+  padding: 24px;
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+}
+.settings-card.fullscreen {
+  flex: 1;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 30px 40px;
+  max-width: 100%;
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+}
+.settings-section-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0 0 24px 0;
+}
+.settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  max-width: 440px;
+}
+.settings-actions {
+  margin-top: 24px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
 </style>
