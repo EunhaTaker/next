@@ -131,44 +131,85 @@
 
       <!-- 专注任务 / 全部 / 已完成 视图 -->
       <div v-else-if="view !== 'settings'" class="task-list-view">
-        <div
-          v-for="task in listViewTasks"
-          :key="task.id"
-          class="task-card fade-up"
-          :class="{ completed: task.completed }"
-          @click="openEdit(task)"
-        >
-          <div class="task-card-left">
-            <div class="task-card-check" @click.stop="store.toggleComplete(task.id)">
-              <div class="check-circle" :class="{ done: task.completed }">
-                <span v-if="task.completed">✓</span>
+        <template v-for="task in listViewTasks" :key="task.id">
+          <!-- 任务卡片 -->
+          <div
+            class="task-card fade-up"
+            :class="{ completed: task.completed }"
+            @click="openEdit(task)"
+          >
+            <div class="task-card-left">
+              <div class="task-card-check" @click.stop="store.toggleComplete(task.id)">
+                <div class="check-circle" :class="{ done: task.completed }">
+                  <span v-if="task.completed">✓</span>
+                </div>
+              </div>
+              <div class="task-card-info">
+                <span class="task-card-title">{{ task.title }}</span>
+                <div class="task-card-meta">
+                  <span class="badge" :class="urgencyClass(task.urgency)">{{ urgencyLabel(task.urgency) }}</span>
+                  <span class="badge" :class="importanceClass(task.importance)">{{ importanceLabel(task.importance) }}</span>
+                  <span v-if="task.dueDate" class="task-card-due" :class="{ overdue: isOverdue(task.dueDate) }">
+                    📅 {{ formatDate(task.dueDate) }}
+                  </span>
+                  <span v-if="task.desktopId !== undefined" class="task-card-desktop">🖥 {{ store.getDesktopName(task.desktopId) }}</span>
+                  <span v-if="task.subtasks && task.subtasks.length" class="task-card-subs">⊟ {{ task.subtasks.filter(s=>!s.completed).length }}/{{ task.subtasks.length }}</span>
+                </div>
+                <p v-if="task.description" class="task-card-desc">{{ task.description }}</p>
               </div>
             </div>
-            <div class="task-card-info">
-              <span class="task-card-title">{{ task.title }}</span>
-              <div class="task-card-meta">
-                <span class="badge" :class="urgencyClass(task.urgency)">{{ urgencyLabel(task.urgency) }}</span>
-                <span class="badge" :class="importanceClass(task.importance)">{{ importanceLabel(task.importance) }}</span>
-                <span v-if="task.dueDate" class="task-card-due" :class="{ overdue: isOverdue(task.dueDate) }">
-                  📅 {{ formatDate(task.dueDate) }}
-                </span>
-                <span v-if="task.desktopId !== undefined" class="task-card-desktop">🖥 {{ store.getDesktopName(task.desktopId) }}</span>
-              </div>
-              <p v-if="task.description" class="task-card-desc">{{ task.description }}</p>
+            <div class="task-card-right" @click.stop>
+              <!-- 展开子任务按钒（有子任务时显示） -->
+              <button
+                v-if="task.subtasks && task.subtasks.length"
+                class="btn-icon expand-btn"
+                :class="{ active: expandedIds.has(task.id) }"
+                :title="expandedIds.has(task.id) ? '折叠子任务' : '展开子任务'"
+                @click="toggleExpand(task.id)"
+              >{{ expandedIds.has(task.id) ? '▼' : '▶' }}</button>
+              <button
+                class="btn-icon"
+                :class="{ active: store.focusIds.includes(task.id) }"
+                :title="store.focusIds.includes(task.id) ? '移出专注' : '加入专注'"
+                @click="toggleFocus(task.id)"
+              >{{ store.focusIds.includes(task.id) ? '★' : '☆' }}</button>
+              <button class="btn-icon remove-btn" @click="store.deleteTask(task.id)" title="删除">×</button>
             </div>
           </div>
-          <div class="task-card-right" @click.stop>
-            <button
-              class="btn-icon"
-              :class="{ active: store.focusIds.includes(task.id) }"
-              :title="store.focusIds.includes(task.id) ? '移出专注' : '加入专注'"
-              @click="toggleFocus(task.id)"
-            >{{ store.focusIds.includes(task.id) ? '★' : '☆' }}</button>
-            <button class="btn-icon remove-btn" @click="store.deleteTask(task.id)" title="删除">×</button>
-          </div>
-        </div>
+
+          <!-- 展开的子任务行 -->
+          <template v-if="expandedIds.has(task.id) && task.subtasks && task.subtasks.length">
+            <div
+              v-for="sub in task.subtasks"
+              :key="sub.id"
+              class="subtask-row"
+              :class="{ completed: sub.completed }"
+            >
+              <div class="subtask-row-indent"></div>
+              <div class="subtask-row-check" @click="store.toggleSubTaskComplete(task.id, sub.id)">
+                <div class="check-circle" :class="{ done: sub.completed }">
+                  <span v-if="sub.completed">✓</span>
+                </div>
+              </div>
+              <div class="subtask-row-info">
+                <span class="subtask-row-title">{{ sub.title }}</span>
+                <span v-if="sub.dueDate" class="task-card-due" :class="{ overdue: isOverdue(sub.dueDate) }"> · 📅 {{ formatDate(sub.dueDate) }}</span>
+                <span v-if="sub.desktopId !== undefined" class="task-card-desktop"> · 🖥 {{ store.getDesktopName(sub.desktopId) }}</span>
+              </div>
+              <div class="subtask-row-actions">
+                <button
+                  class="btn-icon"
+                  :class="{ active: store.focusIds.includes(`${task.id}/${sub.id}`) }"
+                  :title="store.focusIds.includes(`${task.id}/${sub.id}`) ? '移出专注' : '加入专注'"
+                  @click="toggleFocus(`${task.id}/${sub.id}`)"
+                >☆</button>
+                <button class="btn-icon remove-btn" @click="store.deleteSubTask(task.id, sub.id)" title="删除">×</button>
+              </div>
+            </div>
+          </template>
+        </template>
         <div class="list-empty" v-if="!listViewTasks.length">
-          <div class="empty-icon">📭</div>
+          <div class="empty-icon">💭</div>
           <span>暂无任务</span>
         </div>
       </div>
@@ -258,7 +299,8 @@ const viewTitle = computed(() => ({
 }[view.value]));
 
 const listViewTasks = computed(() => {
-  if (view.value === "focus") return store.focusTasks;
+  // focus 视图只取父任务（不展示子任务条目）
+  if (view.value === "focus") return store.tasks.filter(t => store.focusIds.includes(t.id));
   if (view.value === "done") return store.tasks.filter(t => t.completed);
   return store.pendingTasks; // all
 });
@@ -293,6 +335,18 @@ function handleSave(data: Omit<Task, "id" | "createdAt" | "completed">) {
     store.addTask(data);
   }
   editorOpen.value = false;
+}
+
+// 展开的任务 id 集合
+const expandedIds = ref<Set<string>>(new Set());
+function toggleExpand(id: string) {
+  if (expandedIds.value.has(id)) {
+    expandedIds.value.delete(id);
+  } else {
+    expandedIds.value.add(id);
+  }
+  // 触发响应式更新
+  expandedIds.value = new Set(expandedIds.value);
 }
 
 function toggleFocus(id: string) {
@@ -608,6 +662,7 @@ function isOverdue(d: string) {
 .task-card-due { font-size: 12px; color: var(--text-muted); }
 .task-card-due.overdue { color: var(--danger); }
 .task-card-desktop { font-size: 12px; color: var(--text-muted); }
+.task-card-subs { font-size: 12px; color: var(--text-muted); }
 .task-card-desc {
   font-size: 12px;
   color: var(--text-secondary);
@@ -678,4 +733,56 @@ function isOverdue(d: string) {
   align-items: center;
   gap: 12px;
 }
+
+/* ─ 展开按钮 ─ */
+.expand-btn { color: var(--text-muted); font-size: 10px; }
+.expand-btn:hover, .expand-btn.active { color: var(--accent); }
+
+/* ─ 子任务行 ─ */
+.subtask-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px 6px 0;
+  border-bottom: 1px solid rgba(197, 175, 164, 0.18);
+  background: rgba(197, 175, 164, 0.04);
+  transition: background var(--transition);
+}
+.subtask-row:hover { background: rgba(197, 175, 164, 0.1); }
+.subtask-row.completed { opacity: 0.5; }
+.subtask-row.completed .subtask-row-title { text-decoration: line-through; color: var(--text-muted); }
+
+.subtask-row-indent {
+  width: 36px;
+  flex-shrink: 0;
+  border-left: 2px solid rgba(197, 175, 164, 0.3);
+  height: 18px;
+  margin-left: 24px;
+}
+.subtask-row-check {
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.subtask-row-info {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.subtask-row-title {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.subtask-row-actions {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
 </style>

@@ -5,20 +5,22 @@
         <span class="picker-title">添加到专注</span>
         <button class="btn-icon" @click="$emit('close')">✕</button>
       </div>
-      <div class="picker-list" v-if="store.notFocusTasks.length">
+      <div class="picker-list" v-if="items.length">
         <div
-          v-for="task in store.notFocusTasks"
-          :key="task.id"
+          v-for="item in items"
+          :key="item.focusId"
           class="picker-item"
-          @click="add(task.id)"
+          :class="{ 'picker-item-sub': item.isSubTask }"
+          @click="add(item.focusId)"
         >
           <div class="picker-item-main">
-            <span class="picker-item-title">{{ task.title }}</span>
-            <span v-if="task.dueDate" class="picker-item-due">截止 {{ formatDate(task.dueDate) }}</span>
+            <span v-if="item.isSubTask" class="picker-sub-parent">{{ item.parentTitle }}</span>
+            <span class="picker-item-title">{{ item.title }}</span>
+            <span v-if="!item.isSubTask && item.dueDate" class="picker-item-due">截止 {{ formatDate(item.dueDate) }}</span>
           </div>
-          <div class="picker-item-badges">
-            <span class="badge" :class="urgencyClass(task.urgency)">{{ urgencyLabel(task.urgency) }}</span>
-            <span class="badge" :class="importanceClass(task.importance)">{{ importanceLabel(task.importance) }}</span>
+          <div class="picker-item-badges" v-if="!item.isSubTask">
+            <span class="badge" :class="urgencyClass(item.urgency)">{{ urgencyLabel(item.urgency) }}</span>
+            <span class="badge" :class="importanceClass(item.importance)">{{ importanceLabel(item.importance) }}</span>
           </div>
           <span class="add-icon">＋</span>
         </div>
@@ -31,14 +33,60 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from "vue";
 import { useTaskStore } from "../stores/tasks";
 import type { Level } from "../stores/tasks";
 
 const emit = defineEmits<{ close: [] }>();
 const store = useTaskStore();
 
-function add(id: string) {
-  store.addToFocus(id);
+// 所有可加入专注的条目：未完成的父任务 + 未完成且未在专注中的子任务
+const items = computed(() => {
+  const result: Array<{
+    focusId: string;
+    title: string;
+    isSubTask: boolean;
+    parentTitle?: string;
+    dueDate?: string;
+    urgency?: Level;
+    importance?: Level;
+  }> = [];
+
+  for (const task of store.tasks) {
+    if (task.completed) continue;
+
+    // 父任务本身（未在专注中）
+    if (!store.focusIds.includes(task.id)) {
+      result.push({
+        focusId: task.id,
+        title: task.title,
+        isSubTask: false,
+        dueDate: task.dueDate,
+        urgency: task.urgency,
+        importance: task.importance,
+      });
+    }
+
+    // 子任务（未完成且未在专注中）
+    for (const sub of task.subtasks ?? []) {
+      if (sub.completed) continue;
+      const subFocusId = `${task.id}/${sub.id}`;
+      if (!store.focusIds.includes(subFocusId)) {
+        result.push({
+          focusId: subFocusId,
+          title: sub.title,
+          isSubTask: true,
+          parentTitle: task.title,
+        });
+      }
+    }
+  }
+
+  return result;
+});
+
+function add(focusId: string) {
+  store.addToFocus(focusId);
   emit("close");
 }
 
@@ -106,12 +154,26 @@ const importanceClass = (i: Level) => i === 3 ? "badge-high" : i === 2 ? "badge-
 .picker-item:last-child { border-bottom: none; }
 .picker-item:hover { background: var(--bg-card-hover); }
 
+.picker-item-sub {
+  padding-left: 22px;
+  background: rgba(197, 175, 164, 0.04);
+}
+.picker-item-sub:hover { background: var(--bg-card-hover); }
+
 .picker-item-main {
   flex: 1;
   display: flex;
   flex-direction: column;
   gap: 2px;
   min-width: 0;
+}
+
+.picker-sub-parent {
+  font-size: 10px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .picker-item-title {

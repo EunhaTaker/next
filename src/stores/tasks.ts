@@ -6,6 +6,18 @@ import type { UnlistenFn } from "@tauri-apps/api/event";
 
 export type Level = 1 | 2 | 3; // 1=低 2=中 3=高
 
+export interface SubTask {
+  id: string;
+  title: string;
+  description?: string;
+  dueDate?: string;
+  importance: Level;
+  urgency: Level;
+  desktopId?: number;
+  completed: boolean;
+  createdAt: string;
+}
+
 export interface Task {
   id: string;
   title: string;
@@ -16,6 +28,7 @@ export interface Task {
   desktopId?: number;
   createdAt: string;
   completed: boolean;
+  subtasks?: SubTask[];
 }
 
 export interface DesktopInfo {
@@ -27,7 +40,7 @@ export interface DesktopInfo {
 export const useTaskStore = defineStore("tasks", () => {
   const tasks = ref<Task[]>([]);
   const desktops = ref<DesktopInfo[]>([]);
-  const focusIds = ref<string[]>([]); // 专注任务 id 列表（有序）
+  const focusIds = ref<string[]>([]); // 专注任务 id 列表（有序），可包含子任务 id（格式: "parentId/subtaskId"）
   const selectedIndex = ref<number | null>(null); // 当前高亮选中的任务索引
   const pomodoroInterval = ref(25); // 默认25分钟
   const pomodoroDuration = ref(5);  // 默认5秒
@@ -86,6 +99,7 @@ export const useTaskStore = defineStore("tasks", () => {
       id: crypto.randomUUID(),
       createdAt: new Date().toISOString(),
       completed: false,
+      subtasks: [],
     };
     tasks.value.unshift(task);
     persist();
@@ -100,6 +114,13 @@ export const useTaskStore = defineStore("tasks", () => {
   }
 
   function deleteTask(id: string) {
+    // 删除任务时，同时清理其子任务在 focusIds 中的引用
+    const task = tasks.value.find(t => t.id === id);
+    if (task?.subtasks) {
+      for (const sub of task.subtasks) {
+        focusIds.value = focusIds.value.filter(fid => fid !== `${id}/${sub.id}`);
+      }
+    }
     tasks.value = tasks.value.filter((t) => t.id !== id);
     focusIds.value = focusIds.value.filter((fid) => fid !== id);
     persist();
@@ -107,7 +128,60 @@ export const useTaskStore = defineStore("tasks", () => {
 
   function toggleComplete(id: string) {
     const t = tasks.value.find((t) => t.id === id);
-    if (t) t.completed = !t.completed;
+    if (t) {
+      t.completed = !t.completed;
+      // 任务完成后从专注列表移除（包括其子任务）
+      if (t.completed) {
+        focusIds.value = focusIds.value.filter((fid) => fid !== id && !fid.startsWith(`${id}/`));
+      }
+    }
+    persist();
+  }
+
+  // ── 子任务 CRUD ──
+  function addSubTask(parentId: string, partial: Omit<SubTask, "id" | "createdAt" | "completed">) {
+    const parent = tasks.value.find(t => t.id === parentId);
+    if (!parent) return;
+    if (!parent.subtasks) parent.subtasks = [];
+    const sub: SubTask = {
+      ...partial,
+      id: crypto.randomUUID(),
+      completed: false,
+      createdAt: new Date().toISOString(),
+    };
+    parent.subtasks.push(sub);
+    persist();
+    return sub;
+  }
+
+  function updateSubTask(parentId: string, subId: string, patch: Partial<Omit<SubTask, "id" | "createdAt">>) {
+    const parent = tasks.value.find(t => t.id === parentId);
+    if (!parent?.subtasks) return;
+    const idx = parent.subtasks.findIndex(s => s.id === subId);
+    if (idx < 0) return;
+    parent.subtasks[idx] = { ...parent.subtasks[idx], ...patch };
+    persist();
+  }
+
+  function deleteSubTask(parentId: string, subId: string) {
+    const parent = tasks.value.find(t => t.id === parentId);
+    if (!parent?.subtasks) return;
+    parent.subtasks = parent.subtasks.filter(s => s.id !== subId);
+    focusIds.value = focusIds.value.filter(fid => fid !== `${parentId}/${subId}`);
+    persist();
+  }
+
+  function toggleSubTaskComplete(parentId: string, subId: string) {
+    const parent = tasks.value.find(t => t.id === parentId);
+    if (!parent?.subtasks) return;
+    const sub = parent.subtasks.find(s => s.id === subId);
+    if (sub) {
+      sub.completed = !sub.completed;
+      // 子任务完成后从专注列表移除
+      if (sub.completed) {
+        focusIds.value = focusIds.value.filter(fid => fid !== `${parentId}/${subId}`);
+      }
+    }
     persist();
   }
 
@@ -176,15 +250,51 @@ export const useTaskStore = defineStore("tasks", () => {
     await persist();
   }
 
+  // ── 解析 focusId（支持子任务格式 "parentId/subId"）──
+  function resolveFocusId(focusId: string): { task: Task | null; subtask: SubTask | null; desktopId?: number } {
+    if (focusId.includes("/")) {
+      const [parentId, subId] = focusId.split("/");
+      const parent = tasks.value.find(t => t.id === parentId) ?? null;
+      const sub = parent?.subtasks?.find(s => s.id === subId) ?? null;
+      const desktopId = sub?.desktopId ?? parent?.desktopId;
+      return { task: parent, subtask: sub, desktopId };
+    }
+    const task = tasks.value.find(t => t.id === focusId) ?? null;
+    return { task, subtask: null, desktopId: task?.desktopId };
+  }
+
   // ── 计算属性 ──
   const pendingTasks = computed(() =>
     tasks.value.filter((t) => !t.completed)
   );
 
+  // focusTasks: 将 focusIds 中的每一个 id 解析为一个展示对象
+  // 用于悬浮窗列表渲染，包含 isSubTask 标记
   const focusTasks = computed(() =>
     focusIds.value
-      .map((id) => tasks.value.find((t) => t.id === id))
-      .filter(Boolean) as Task[]
+      .map((fid) => {
+        if (fid.includes("/")) {
+          const [parentId, subId] = fid.split("/");
+          const parent = tasks.value.find(t => t.id === parentId);
+          const sub = parent?.subtasks?.find(s => s.id === subId);
+          if (!sub) return null;
+          return {
+            ...sub,
+            focusId: fid,
+            isSubTask: true as const,
+            parentId,
+            parentTitle: parent?.title ?? "",
+            desktopId: sub.desktopId ?? parent?.desktopId,
+          };
+        }
+        const task = tasks.value.find(t => t.id === fid);
+        if (!task) return null;
+        return { ...task, focusId: fid, isSubTask: false as const, parentId: undefined, parentTitle: undefined };
+      })
+      .filter(Boolean) as Array<
+        (Task & { focusId: string; isSubTask: false; parentId: undefined; parentTitle: undefined }) |
+        (SubTask & { focusId: string; isSubTask: true; parentId: string; parentTitle: string; desktopId?: number })
+      >
   );
 
   const notFocusTasks = computed(() =>
@@ -221,6 +331,10 @@ export const useTaskStore = defineStore("tasks", () => {
     updateTask,
     deleteTask,
     toggleComplete,
+    addSubTask,
+    updateSubTask,
+    deleteSubTask,
+    toggleSubTaskComplete,
     addToFocus,
     removeFromFocus,
     moveFocus,
@@ -233,5 +347,6 @@ export const useTaskStore = defineStore("tasks", () => {
     pomodoroInterval,
     pomodoroDuration,
     savePomodoroSettings,
+    resolveFocusId,
   };
 });

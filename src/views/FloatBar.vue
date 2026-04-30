@@ -5,55 +5,56 @@
       <span class="float-brand">Next</span>
       <!-- 按钮区不参与拖拽 -->
       <div class="float-header-actions" @mousedown.stop>
+        <button
+          class="btn-icon split-btn"
+          :class="{ active: splitView }"
+          title="拆分视图 (t)"
+          @click="toggleSplitView"
+        >⊟</button>
         <button class="btn-icon" :title="side === 'right' ? '贴靠左侧' : '贴靠右侧'" @click="snapSide">{{ side === 'right' ? '⟵' : '⟶' }}</button>
         <button class="btn-icon" title="打开管理窗口" @click="openMain">⊞</button>
         <button class="btn-icon" title="隐藏悬浮窗" @click="hideFloat">−</button>
       </div>
     </div>
 
-    <!-- 专注任务列表 -->
-    <div class="float-list" v-if="store.focusTasks.length">
+    <!-- 默认视图：完整专注任务列表 -->
+    <div class="float-list" v-if="!splitView && store.focusTasks.length">
       <div
         v-for="(task, idx) in store.focusTasks"
-        :key="task.id"
+        :key="task.focusId"
         class="float-item fade-up"
-        :class="{ completed: task.completed, selected: store.selectedIndex === idx }"
+        :class="{ completed: task.completed, selected: store.selectedIndex === idx, 'is-subtask': task.isSubTask }"
         :style="{ animationDelay: `${idx * 0.04}s` }"
       >
         <!-- 上移 / 下移 按钮 -->
         <div class="move-btns">
-          <button
-            class="btn-icon move-btn"
-            :disabled="idx === 0"
-            @click="store.moveFocus(task.id, 'up')"
-            title="上移"
-          >▲</button>
-          <button
-            class="btn-icon move-btn"
-            :disabled="idx === store.focusTasks.length - 1"
-            @click="store.moveFocus(task.id, 'down')"
-            title="下移"
-          >▼</button>
+          <button class="btn-icon move-btn" :disabled="idx === 0" @click="store.moveFocus(task.focusId, 'up')" title="上移">▲</button>
+          <button class="btn-icon move-btn" :disabled="idx === store.focusTasks.length - 1" @click="store.moveFocus(task.focusId, 'down')" title="下移">▼</button>
         </div>
 
         <!-- 置顶按钮 -->
         <button
           class="btn-icon pin-btn"
           :class="{ active: idx === 0 }"
-          @click="store.pinToTop(task.id)"
+          @click="store.pinToTop(task.focusId)"
           title="置顶"
         >⇈</button>
 
-        <!-- 任务内容 - 点击选中/取消选中 -->
+        <!-- 任务内容 -->
         <div class="float-item-content" @click="toggleSelect(idx)">
-          <div class="float-item-check" :class="{ done: task.completed }" @click.stop="toggleComplete(task)">
+          <div
+            class="float-item-check"
+            :class="{ done: task.completed }"
+            @click.stop="handleToggleComplete(task)"
+          >
             <span v-if="task.completed">✓</span>
           </div>
           <div class="float-item-info">
+            <span v-if="task.isSubTask" class="subtask-parent-label">{{ task.parentTitle }}</span>
             <span class="float-item-title">{{ task.title }}</span>
-            <div class="float-item-meta" v-if="task.dueDate">
-              <span class="meta-due" :class="{ overdue: isOverdue(task.dueDate) }">
-                📅 {{ formatDate(task.dueDate) }}
+            <div class="float-item-meta" v-if="!task.isSubTask && (task as any).dueDate">
+              <span class="meta-due" :class="{ overdue: isOverdue((task as any).dueDate) }">
+                📅 {{ formatDate((task as any).dueDate) }}
               </span>
             </div>
           </div>
@@ -62,17 +63,65 @@
         <!-- 操作右侧 -->
         <div class="float-item-actions">
           <button
-            v-if="task.desktopId"
+            v-if="task.desktopId !== undefined"
             class="btn-icon"
             title="切换到对应桌面"
             @click="switchDesktop(task.desktopId!)"
           >→</button>
-          <button
-            class="btn-icon remove-btn"
-            title="移出专注"
-            @click="store.removeFromFocus(task.id)"
-          >×</button>
+          <button class="btn-icon remove-btn" title="移出专注" @click="store.removeFromFocus(task.focusId)">×</button>
         </div>
+      </div>
+    </div>
+
+    <!-- 拆分视图：只显示第一个父任务和它的子任务 -->
+    <div class="float-list split-mode" v-else-if="splitView && firstParentTask">
+      <!-- 父任务行 -->
+      <div
+        class="float-item split-parent fade-up"
+        :class="{ completed: firstParentTask.completed, selected: store.selectedIndex === 0 }"
+      >
+        <div class="float-item-content" @click="toggleSelect(0)">
+          <div class="float-item-check" :class="{ done: firstParentTask.completed }" @click.stop="store.toggleComplete(firstParentTask.id)">
+            <span v-if="firstParentTask.completed">✓</span>
+          </div>
+          <div class="float-item-info">
+            <span class="float-item-title split-parent-title">{{ firstParentTask.title }}</span>
+          </div>
+        </div>
+        <div class="float-item-actions">
+          <button v-if="firstParentTask.desktopId !== undefined" class="btn-icon" title="切换到对应桌面" @click="switchDesktop(firstParentTask.desktopId!)">→</button>
+        </div>
+      </div>
+
+      <!-- 子任务列表（未完成的） -->
+      <div
+        v-for="(sub, si) in activeSubs"
+        :key="sub.id"
+        class="float-item split-sub fade-up"
+        :class="{ completed: sub.completed }"
+        :style="{ animationDelay: `${(si + 1) * 0.04}s` }"
+      >
+        <div class="split-sub-indent"></div>
+        <div class="float-item-content" @click="() => {}">
+          <div class="float-item-check" :class="{ done: sub.completed }" @click.stop="store.toggleSubTaskComplete(firstParentTask.id, sub.id)">
+            <span v-if="sub.completed">✓</span>
+          </div>
+          <div class="float-item-info">
+            <span class="float-item-title">{{ sub.title }}</span>
+          </div>
+        </div>
+        <div class="float-item-actions">
+          <button v-if="sub.desktopId !== undefined" class="btn-icon" title="切换到对应桌面" @click="switchDesktop(sub.desktopId!)">→</button>
+        </div>
+      </div>
+
+      <!-- 无子任务提示 -->
+      <div v-if="firstParentTask.subtasks && firstParentTask.subtasks.length === 0" class="split-no-sub">
+        暂无子任务
+      </div>
+      <!-- 所有子任务完成时提示 -->
+      <div v-else-if="activeSubs.length === 0" class="split-no-sub">
+        🎉 全部子任务已完成
       </div>
     </div>
 
@@ -93,16 +142,44 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch } from "vue";
+import { ref, onMounted, onUnmounted, watch, computed } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { invoke } from "@tauri-apps/api/core";
 import { useTaskStore } from "../stores/tasks";
 import TaskPicker from "../components/TaskPicker.vue";
-import type { Task } from "../stores/tasks";
 
 const store = useTaskStore();
 const showPicker = ref(false);
+const splitView = ref(false);
+
+// ── 拆分视图：取第一个父任务 ──
+const firstParentTask = computed(() => {
+  // 找第一个非子任务的专注任务
+  const first = store.focusTasks.find(t => !t.isSubTask);
+  if (!first) return null;
+  return store.tasks.find(t => t.id === first.id) ?? null;
+});
+
+const activeSubs = computed(() => {
+  if (!firstParentTask.value) return [];
+  return (firstParentTask.value.subtasks ?? []).filter(s => !s.completed);
+});
+
+function toggleSplitView() {
+  splitView.value = !splitView.value;
+  // 高度由 watch(currentItemCount) 自动触发，无需手动调用
+}
+
+// 父任务完成时退出拆分视图
+watch(
+  () => firstParentTask.value?.completed,
+  (completed) => {
+    if (completed && splitView.value) {
+      splitView.value = false;
+    }
+  }
+);
 
 // ── 番茄钟 ──
 let pomodoroIntervalId: ReturnType<typeof setInterval> | null = null;
@@ -114,12 +191,9 @@ function stopPomodoroPoll() {
 }
 
 function triggerPomodoro() {
-  // 仅显示窗口，不抢夺焦点
   invoke("show_float_window_passive").catch(() => {});
-
   stopPomodoroPoll();
   pomodoroEndTime = Date.now() + Math.max(1, store.pomodoroDuration) * 1000;
-  // 用 Date.now() 轮询代替 setTimeout，避免 WebView2 后台节流
   pomodoroPollId = setInterval(() => {
     if (Date.now() >= pomodoroEndTime) {
       invoke("hide_float_window").catch(() => {});
@@ -131,7 +205,6 @@ function triggerPomodoro() {
 function setupPomodoro() {
   if (pomodoroIntervalId) { clearInterval(pomodoroIntervalId); pomodoroIntervalId = null; }
   stopPomodoroPoll();
-
   const intervalMin = store.pomodoroInterval;
   if (intervalMin > 0) {
     pomodoroIntervalId = setInterval(triggerPomodoro, intervalMin * 60 * 1000);
@@ -145,9 +218,15 @@ let dClickTimer: ReturnType<typeof setTimeout> | null = null;
 let dClickCount = 0;
 
 function handleKeydown(e: KeyboardEvent) {
-  // ESC 取消选中
   if (e.key === "Escape") {
     store.setSelectedIndex(null);
+    return;
+  }
+
+  // t 键：切换拆分视图
+  if (e.key === "t" && store.selectedIndex !== null) {
+    e.preventDefault();
+    toggleSplitView();
     return;
   }
 
@@ -160,12 +239,12 @@ function handleKeydown(e: KeyboardEvent) {
 
     if (isAlt) {
       if (store.selectedIndex === null) return;
-      const id = store.focusTasks[store.selectedIndex].id;
+      const focusId = store.focusTasks[store.selectedIndex].focusId;
       if (isUp && store.selectedIndex > 0) {
-        store.moveFocus(id, "up");
+        store.moveFocus(focusId, "up");
         store.setSelectedIndex(store.selectedIndex - 1);
       } else if (!isUp && store.selectedIndex < store.focusTasks.length - 1) {
-        store.moveFocus(id, "down");
+        store.moveFocus(focusId, "down");
         store.setSelectedIndex(store.selectedIndex + 1);
       }
     } else {
@@ -174,12 +253,8 @@ function handleKeydown(e: KeyboardEvent) {
         newIdx = isUp ? Math.max(0, newIdx - 1) : Math.min(store.focusTasks.length - 1, newIdx + 1);
       }
       store.setSelectedIndex(newIdx);
-      
-      // Auto scroll logic
       const activeEl = document.querySelector(".float-item.selected");
-      if (activeEl) {
-        activeEl.scrollIntoView({ block: "nearest", behavior: "smooth" });
-      }
+      if (activeEl) activeEl.scrollIntoView({ block: "nearest", behavior: "smooth" });
     }
     return;
   }
@@ -188,7 +263,7 @@ function handleKeydown(e: KeyboardEvent) {
     const task = store.focusTasks[store.selectedIndex];
     if (e.key === "c") {
       e.preventDefault();
-      store.removeFromFocus(task.id);
+      store.removeFromFocus(task.focusId);
       if (store.selectedIndex >= store.focusTasks.length) {
         store.setSelectedIndex(store.focusTasks.length > 0 ? store.focusTasks.length - 1 : null);
       }
@@ -198,7 +273,12 @@ function handleKeydown(e: KeyboardEvent) {
       if (dClickTimer) clearTimeout(dClickTimer);
 
       if (dClickCount >= 2) {
-        store.toggleComplete(task.id);
+        // 双击 d：完成任务
+        if (task.isSubTask) {
+          store.toggleSubTaskComplete(task.parentId, task.id);
+        } else {
+          store.toggleComplete(task.id);
+        }
         dClickCount = 0;
       } else {
         dClickTimer = setTimeout(() => {
@@ -206,7 +286,7 @@ function handleKeydown(e: KeyboardEvent) {
             invoke("switch_to_desktop", { index: task.desktopId }).catch(console.error);
           }
           dClickCount = 0;
-        }, 400); // 双击等待阈值
+        }, 400);
       }
     }
   }
@@ -218,9 +298,7 @@ onMounted(() => {
   const app = document.getElementById('app');
   if (app) app.style.background = 'transparent';
   store.init().then(() => setupPomodoro());
-  // 初始化后调整一次
   adjustHeight(store.focusTasks.length);
-
   window.addEventListener("keydown", handleKeydown);
 });
 
@@ -230,18 +308,22 @@ onUnmounted(() => {
   window.removeEventListener("keydown", handleKeydown);
 });
 
-// 精确高度常量（逻辑像素）
-// HEADER: padding(10+8) + btn-icon(26px) + border-bottom(1) = 45
-// LIST_PAD: float-list padding-top(6) + padding-bottom(6) = 12
-// ITEM: padding(6+6) + move-btns(18×2=36) + border-bottom(1) = 49
-// ADDBTN: height:40px (border 已含在 box-sizing:border-box 内) = 40
 const HEADER_H = 45;
 const LIST_PAD = 12;
 const ITEM_H   = 49;
 const ADDBTN_H = 40;
 const EMPTY_H  = 80;
 const MAX_H    = 600;
-const MIN_H    = HEADER_H + EMPTY_H + ADDBTN_H; // 165
+const MIN_H    = HEADER_H + EMPTY_H + ADDBTN_H;
+
+// 当前视图下实际显示的条目数（用于高度计算）
+const currentItemCount = computed(() => {
+  if (splitView.value && firstParentTask.value) {
+    // 1 父任务 + 未完成子任务数（至少显示 1 行提示，但高度按实际条目算）
+    return 1 + activeSubs.value.length;
+  }
+  return store.focusTasks.length;
+});
 
 function adjustHeight(count: number) {
   const scale = window.devicePixelRatio || 1;
@@ -252,8 +334,7 @@ function adjustHeight(count: number) {
   invoke("resize_float_window", { height: physical }).catch(console.error);
 }
 
-
-watch(() => store.focusTasks.length, (n) => adjustHeight(n));
+watch(currentItemCount, (n) => adjustHeight(n));
 
 function snapSide() {
   const target = side.value === 'right' ? 'left' : 'right';
@@ -261,8 +342,6 @@ function snapSide() {
   invoke('snap_float_window', { side: target }).catch(console.error);
 }
 
-// 直接从 JS 创建/聚焦主窗口
-// Tauri 内部的 WebviewWindow 创建会路由到主线程，不受 invoke 线程限制
 async function openMain() {
   try {
     new WebviewWindow("main", {
@@ -278,14 +357,18 @@ async function openMain() {
   }
 }
 
-
-// 直接调 Tauri window API 隐藏自身，不经过 invoke
 function hideFloat() {
   getCurrentWindow().hide().catch(console.error);
 }
 
-function toggleComplete(task: Task) {
-  store.toggleComplete(task.id);
+function handleToggleComplete(task: (typeof store.focusTasks)[number]) {
+  if (task.isSubTask) {
+    store.toggleSubTaskComplete(task.parentId, task.id);
+  } else {
+    store.toggleComplete(task.id);
+    // 完成父任务后退出拆分视图
+    if (splitView.value) splitView.value = false;
+  }
 }
 
 function toggleSelect(idx: number) {
@@ -359,6 +442,12 @@ function isOverdue(d: string) {
   gap: 2px;
 }
 
+.split-btn.active {
+  color: var(--accent);
+  background: rgba(204, 126, 133, 0.12);
+  border-radius: 4px;
+}
+
 /* ── 任务列表 ── */
 .float-list {
   flex: 1;
@@ -387,8 +476,12 @@ function isOverdue(d: string) {
   border-color: var(--dusty-rose);
   transform: translateX(2px);
 }
+.float-item.is-subtask {
+  background: rgba(197, 175, 164, 0.04);
+  padding-left: 14px;
+}
 
-/* 上移下移按钮组——竖直排列 */
+/* 上移下移按钮组 */
 .move-btns {
   display: flex;
   flex-direction: column;
@@ -451,6 +544,15 @@ function isOverdue(d: string) {
   gap: 2px;
 }
 
+.subtask-parent-label {
+  font-size: 9px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.2;
+}
+
 .float-item-title {
   font-size: 13px;
   font-weight: 500;
@@ -468,7 +570,7 @@ function isOverdue(d: string) {
   flex-wrap: nowrap;
   overflow: hidden;
 }
-.meta-due, .meta-desktop {
+.meta-due {
   font-size: 10px;
   color: var(--text-muted);
   white-space: nowrap;
@@ -486,6 +588,33 @@ function isOverdue(d: string) {
 }
 .remove-btn { color: var(--text-muted); }
 .remove-btn:hover { color: var(--danger); }
+
+/* ── 拆分视图 ── */
+.split-parent {
+  border-bottom: 2px solid rgba(204, 126, 133, 0.3);
+  background: rgba(204, 126, 133, 0.04);
+}
+.split-parent-title {
+  font-weight: 700;
+  font-size: 13px;
+}
+.split-sub {
+  height: 42px;
+  padding-left: 4px;
+}
+.split-sub-indent {
+  width: 12px;
+  flex-shrink: 0;
+  border-left: 2px solid rgba(197, 175, 164, 0.35);
+  height: 70%;
+  margin-left: 6px;
+}
+.split-no-sub {
+  padding: 12px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-muted);
+}
 
 /* ── 空状态 ── */
 .float-empty {
@@ -522,45 +651,5 @@ function isOverdue(d: string) {
   font-size: 20px;
   font-weight: 300;
   line-height: 1;
-}
-
-/* ── 番茄钟遮罩 ── */
-.pomodoro-overlay {
-  position: absolute;
-  inset: 0;
-  z-index: 9999;
-  background: rgba(228, 222, 218, 0.92);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 14px;
-  cursor: pointer;
-}
-.pomodoro-content {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  text-align: center;
-}
-.pomodoro-icon { font-size: 42px; margin-bottom: 4px; }
-.pomodoro-title {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 700;
-  color: var(--text-primary);
-}
-.pomodoro-desc {
-  margin: 0;
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-.pomodoro-fade-enter-active, .pomodoro-fade-leave-active {
-  transition: opacity 0.35s ease;
-}
-.pomodoro-fade-enter-from, .pomodoro-fade-leave-to {
-  opacity: 0;
 }
 </style>
