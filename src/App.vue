@@ -107,6 +107,21 @@ onMounted(async () => {
     } catch (e) {
       console.warn(`❌ 快捷键 ${mainKey} 注册失败，可能与其他软件冲突:`, e);
     }
+
+    // ctrl+alt+d：切换到第一个任务/子任务对应桌面
+    const deskKey = "CommandOrControl+Alt+D";
+    try {
+      if (!(await isRegistered(deskKey))) {
+        await register(deskKey, async (event) => {
+          if (event.state === "Pressed") {
+            emit("switch-first-desktop").catch(() => {});
+          }
+        });
+        console.log(`✅ 快捷键注册成功: ${deskKey}`);
+      }
+    } catch (e) {
+      console.warn(`❌ 快捷键 ${deskKey} 注册失败，可能与其他软件冲突:`, e);
+    }
   }
 });
 </script>

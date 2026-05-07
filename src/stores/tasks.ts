@@ -399,6 +399,44 @@ export const useTaskStore = defineStore("tasks", () => {
     notifyOthers();
   }
 
+  async function moveSubTask(parentId: string, subId: string, direction: "up" | "down") {
+    if (!db) return;
+    const parent = tasks.value.find(t => t.id === parentId);
+    if (!parent?.subtasks) return;
+    // 只在活跃（未完成）子任务范围内排序，已完成的保持原位置
+    const activeSubs = parent.subtasks.filter(s => !s.completed);
+    const idx = activeSubs.findIndex(s => s.id === subId);
+    if (idx < 0) return;
+    if (direction === "up" && idx === 0) return;
+    if (direction === "down" && idx === activeSubs.length - 1) return;
+    const swapIdx = direction === "up" ? idx - 1 : idx + 1;
+    [activeSubs[idx], activeSubs[swapIdx]] = [activeSubs[swapIdx], activeSubs[idx]];
+    // 重建顺序：活跃子任务按新顺序排在前，已完成的追加在后
+    const completedSubs = parent.subtasks.filter(s => s.completed);
+    const newOrder = [...activeSubs, ...completedSubs];
+    for (let i = 0; i < newOrder.length; i++) {
+      await db.execute("UPDATE tasks SET sort_order = ? WHERE id = ?", [i, newOrder[i].id]);
+    }
+    await reload();
+    notifyOthers();
+  }
+
+  async function pinSubTaskToTop(parentId: string, subId: string) {
+    if (!db) return;
+    const parent = tasks.value.find(t => t.id === parentId);
+    if (!parent?.subtasks) return;
+    // 只在活跃子任务范围内置顶，已完成的追加在后
+    const activeSubs = parent.subtasks.filter(s => !s.completed);
+    const completedSubs = parent.subtasks.filter(s => s.completed);
+    const newActive = [subId, ...activeSubs.filter(s => s.id !== subId).map(s => s.id)];
+    const newOrder = [...newActive, ...completedSubs.map(s => s.id)];
+    for (let i = 0; i < newOrder.length; i++) {
+      await db.execute("UPDATE tasks SET sort_order = ? WHERE id = ?", [i, newOrder[i]]);
+    }
+    await reload();
+    notifyOthers();
+  }
+
   async function toggleSubTaskComplete(parentId: string, subId: string) {
     if (!db) return;
     const parent = tasks.value.find(t => t.id === parentId);
@@ -604,6 +642,8 @@ export const useTaskStore = defineStore("tasks", () => {
     updateSubTask,
     deleteSubTask,
     toggleSubTaskComplete,
+    moveSubTask,
+    pinSubTaskToTop,
     addToFocus,
     removeFromFocus,
     moveFocus,

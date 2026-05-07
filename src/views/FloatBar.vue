@@ -87,9 +87,9 @@
       <!-- 父任务行 -->
       <div
         class="float-item split-parent fade-up"
-        :class="{ completed: firstParentTask.completed, selected: store.selectedIndex === 0 }"
+        :class="{ completed: firstParentTask.completed }"
       >
-        <div class="float-item-content" @click="toggleSelect(0)">
+        <div class="float-item-content">
           <div class="float-item-check" :class="{ done: firstParentTask.completed }" @click.stop="store.toggleComplete(firstParentTask.id)">
             <span v-if="firstParentTask.completed">✓</span>
           </div>
@@ -98,14 +98,6 @@
           </div>
         </div>
         <div class="float-item-actions">
-          <div class="timer-wrap" @mouseenter="showTimerTip(firstParentTask.id, $event)" @mouseleave="hideTimerTip">
-            <button
-              class="btn-icon timer-btn"
-              :class="{ running: store.isTimerRunning(firstParentTask.id) }"
-              :title="store.isTimerRunning(firstParentTask.id) ? '暂停计时' : '开始计时'"
-              @click.stop="store.toggleTimer(firstParentTask.id)"
-            >⏱</button>
-          </div>
           <button v-if="firstParentTask.desktopId !== undefined" class="btn-icon" title="切换到对应桌面" @click="switchDesktop(firstParentTask.desktopId!)">→</button>
         </div>
       </div>
@@ -115,12 +107,25 @@
         v-for="(sub, si) in activeSubs"
         :key="sub.id"
         class="float-item split-sub fade-up"
-        :class="{ completed: sub.completed }"
+        :class="{ completed: sub.completed, selected: splitSubIndex === si }"
         :style="{ animationDelay: `${(si + 1) * 0.04}s` }"
+        @click="splitSubIndex = (splitSubIndex === si ? null : si)"
       >
         <div class="split-sub-indent"></div>
+        <!-- 上移 / 下移 按钮 -->
+        <div class="move-btns" @click.stop>
+          <button class="btn-icon move-btn" :disabled="si === 0" @click="store.moveSubTask(firstParentTask!.id, sub.id, 'up')" title="上移">▲</button>
+          <button class="btn-icon move-btn" :disabled="si === activeSubs.length - 1" @click="store.moveSubTask(firstParentTask!.id, sub.id, 'down')" title="下移">▼</button>
+        </div>
+        <!-- 置顶按钮 -->
+        <button
+          class="btn-icon pin-btn"
+          :class="{ active: si === 0 }"
+          @click.stop="store.pinSubTaskToTop(firstParentTask!.id, sub.id)"
+          title="置顶"
+        >⇈</button>
         <div class="float-item-content" @click="() => {}">
-          <div class="float-item-check" :class="{ done: sub.completed }" @click.stop="store.toggleSubTaskComplete(firstParentTask.id, sub.id)">
+          <div class="float-item-check" :class="{ done: sub.completed }" @click.stop="store.toggleSubTaskComplete(firstParentTask!.id, sub.id)">
             <span v-if="sub.completed">✓</span>
           </div>
           <div class="float-item-info">
@@ -128,12 +133,12 @@
           </div>
         </div>
         <div class="float-item-actions">
-          <div class="timer-wrap" @mouseenter="showTimerTip(`${firstParentTask.id}/${sub.id}`, $event)" @mouseleave="hideTimerTip">
+          <div class="timer-wrap" @mouseenter="showTimerTip(`${firstParentTask!.id}/${sub.id}`, $event)" @mouseleave="hideTimerTip">
             <button
               class="btn-icon timer-btn"
-              :class="{ running: store.isTimerRunning(`${firstParentTask.id}/${sub.id}`) }"
-              :title="store.isTimerRunning(`${firstParentTask.id}/${sub.id}`) ? '暂停计时' : '开始计时'"
-              @click.stop="store.toggleTimer(`${firstParentTask.id}/${sub.id}`)"
+              :class="{ running: store.isTimerRunning(`${firstParentTask!.id}/${sub.id}`) }"
+              :title="store.isTimerRunning(`${firstParentTask!.id}/${sub.id}`) ? '暂停计时' : '开始计时'"
+              @click.stop="store.toggleTimer(`${firstParentTask!.id}/${sub.id}`)"
             >⏱</button>
           </div>
           <button v-if="sub.desktopId !== undefined" class="btn-icon" title="切换到对应桌面" @click="switchDesktop(sub.desktopId!)">→</button>
@@ -196,6 +201,7 @@ import type { TimeSession } from "../stores/tasks";
 const store = useTaskStore();
 const showPicker = ref(false);
 const splitView = ref(false);
+const splitSubIndex = ref<number | null>(null);
 
 // ── 拆分视图：取第一个父任务 ──
 const firstParentTask = computed(() => {
@@ -212,7 +218,8 @@ const activeSubs = computed(() => {
 
 function toggleSplitView() {
   splitView.value = !splitView.value;
-  // 高度由 watch(currentItemCount) 自动触发，无需手动调用
+  splitSubIndex.value = null;
+  store.setSelectedIndex(null);
 }
 
 // 父任务完成时退出拆分视图
@@ -221,7 +228,22 @@ watch(
   (completed) => {
     if (completed && splitView.value) {
       splitView.value = false;
+      splitSubIndex.value = null;
     }
+  }
+);
+
+// 全局快捷键 ctrl+alt+{数字} 在拆分视图中转换为子任务选中
+watch(
+  () => store.selectedIndex,
+  (idx) => {
+    if (!splitView.value || idx === null) return;
+    // 将对专注列表的选中重定向为子任务选中
+    const subCount = activeSubs.value.length;
+    if (subCount > 0) {
+      splitSubIndex.value = Math.min(idx, subCount - 1);
+    }
+    store.setSelectedIndex(null);
   }
 );
 
@@ -265,9 +287,28 @@ const side = ref<'left' | 'right'>('right');
 let dClickTimer: ReturnType<typeof setTimeout> | null = null;
 let dClickCount = 0;
 
+/** 返回 ctrl+alt+space 应该操作的 focusId：
+ *  - 拆分视图且有未完成子任务 → 第一个未完成子任务的 focusId
+ *  - 拆分视图但无子任务 → null（不操作父任务）
+ *  - 否则 → 第一个专注任务的 focusId（或 null）
+ */
+function getFirstTimerTarget(): string | null {
+  if (splitView.value) {
+    if (firstParentTask.value && activeSubs.value.length > 0) {
+      return `${firstParentTask.value.id}/${activeSubs.value[0].id}`;
+    }
+    return null; // 拆分视图但无子任务：不操作
+  }
+  return store.focusTasks.length > 0 ? store.focusTasks[0].focusId : null;
+}
+
 function handleKeydown(e: KeyboardEvent) {
   if (e.key === "Escape") {
-    store.setSelectedIndex(null);
+    if (splitView.value) {
+      splitSubIndex.value = null;
+    } else {
+      store.setSelectedIndex(null);
+    }
     return;
   }
 
@@ -278,15 +319,70 @@ function handleKeydown(e: KeyboardEvent) {
     return;
   }
 
-  // ctrl+alt+space：对第一个专注任务开始/暂停计时
+  // ctrl+alt+space 由全局快捷键处理（通过 toggle-first-timer 事件），这里不再重复处理避免双触发
   if (e.ctrlKey && e.altKey && e.code === "Space") {
     e.preventDefault();
-    if (store.focusTasks.length > 0) {
-      store.toggleTimer(store.focusTasks[0].focusId);
+    return;
+  }
+
+  // ── 拆分视图：键盘只操作子任务 ──
+  if (splitView.value && firstParentTask.value && activeSubs.value.length > 0) {
+    const subs = activeSubs.value;
+    const parent = firstParentTask.value;
+
+    if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+      e.preventDefault();
+      const isUp = e.key === "ArrowUp";
+      if (e.altKey) {
+        // alt+UP/DOWN：移动子任务
+        if (splitSubIndex.value === null) return;
+        const si = splitSubIndex.value;
+        if (isUp && si > 0) {
+          store.moveSubTask(parent.id, subs[si].id, "up");
+          splitSubIndex.value = si - 1;
+        } else if (!isUp && si < subs.length - 1) {
+          store.moveSubTask(parent.id, subs[si].id, "down");
+          splitSubIndex.value = si + 1;
+        }
+      } else {
+        // UP/DOWN：导航子任务
+        let newSi = splitSubIndex.value ?? (isUp ? subs.length - 1 : 0);
+        if (splitSubIndex.value !== null) {
+          newSi = isUp ? Math.max(0, newSi - 1) : Math.min(subs.length - 1, newSi + 1);
+        }
+        splitSubIndex.value = newSi;
+        const activeEl = document.querySelector(".split-sub.selected");
+        if (activeEl) activeEl.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      }
+      return;
+    }
+
+    if (splitSubIndex.value !== null && subs[splitSubIndex.value]) {
+      const sub = subs[splitSubIndex.value];
+      if (e.key === "d" && !e.ctrlKey && !e.altKey) {
+        e.preventDefault();
+        dClickCount++;
+        if (dClickTimer) clearTimeout(dClickTimer);
+        if (dClickCount >= 2) {
+          store.toggleSubTaskComplete(parent.id, sub.id);
+          splitSubIndex.value = null;
+          dClickCount = 0;
+        } else {
+          dClickTimer = setTimeout(() => {
+            if (dClickCount === 1) {
+              const deskId = sub.desktopId ?? parent.desktopId;
+              if (deskId !== undefined) invoke("switch_to_desktop", { index: deskId }).catch(console.error);
+            }
+            dClickCount = 0;
+          }, 400);
+        }
+        return;
+      }
     }
     return;
   }
 
+  // ── 默认视图：键盘操作专注列表 ──
   if (store.focusTasks.length === 0) return;
 
   if (e.key === "ArrowUp" || e.key === "ArrowDown") {
@@ -324,7 +420,7 @@ function handleKeydown(e: KeyboardEvent) {
       if (store.selectedIndex >= store.focusTasks.length) {
         store.setSelectedIndex(store.focusTasks.length > 0 ? store.focusTasks.length - 1 : null);
       }
-    } else if (e.key === "d") {
+    } else if (e.key === "d" && !e.ctrlKey && !e.altKey) {
       e.preventDefault();
       dClickCount++;
       if (dClickTimer) clearTimeout(dClickTimer);
@@ -351,6 +447,18 @@ function handleKeydown(e: KeyboardEvent) {
 
 let _unlistenUserShow: (() => void) | null = null;
 let _unlistenToggleTimer: (() => void) | null = null;
+let _unlistenSwitchDesktop: (() => void) | null = null;
+
+/** 取第一个任务/子任务的 desktopId（无绑定则沿用父任务），返回 undefined 表示无目标 */
+function getFirstDesktopTarget(): number | undefined {
+  if (splitView.value && firstParentTask.value && activeSubs.value.length > 0) {
+    const sub = activeSubs.value[0];
+    return sub.desktopId ?? firstParentTask.value.desktopId;
+  }
+  const first = store.focusTasks[0];
+  if (!first) return undefined;
+  return first.desktopId;
+}
 
 onMounted(async () => {
   document.documentElement.style.background = 'transparent';
@@ -366,11 +474,16 @@ onMounted(async () => {
     stopPomodoroPoll();
   });
 
-  // ctrl+alt+space 触发第一个专注任务的计时切换
+  // ctrl+alt+space 触发第一个专注任务的计时切换（拆分视图时操作第一个子任务）
   _unlistenToggleTimer = await listen("toggle-first-timer", () => {
-    if (store.focusTasks.length > 0) {
-      store.toggleTimer(store.focusTasks[0].focusId);
-    }
+    const focusId = getFirstTimerTarget();
+    if (focusId) store.toggleTimer(focusId);
+  });
+
+  // ctrl+alt+d 切换到第一个任务/子任务的桌面
+  _unlistenSwitchDesktop = await listen("switch-first-desktop", () => {
+    const deskId = getFirstDesktopTarget();
+    if (deskId !== undefined) invoke("switch_to_desktop", { index: deskId }).catch(console.error);
   });
 });
 
@@ -380,6 +493,7 @@ onUnmounted(() => {
   window.removeEventListener("keydown", handleKeydown);
   _unlistenUserShow?.();
   _unlistenToggleTimer?.();
+  _unlistenSwitchDesktop?.();
 });
 
 const HEADER_H = 45;
