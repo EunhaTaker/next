@@ -19,8 +19,8 @@
             <span v-if="!item.isSubTask && item.dueDate" class="picker-item-due">截止 {{ formatDate(item.dueDate) }}</span>
           </div>
           <div class="picker-item-badges" v-if="!item.isSubTask">
-            <span class="badge" :class="urgencyClass(item.urgency)">{{ urgencyLabel(item.urgency) }}</span>
-            <span class="badge" :class="importanceClass(item.importance)">{{ importanceLabel(item.importance) }}</span>
+            <span class="badge" :class="urgencyClass(item.urgency!)">{{ urgencyLabel(item.urgency!) }}</span>
+            <span class="badge" :class="importanceClass(item.importance!)">{{ importanceLabel(item.importance!) }}</span>
           </div>
           <span class="add-icon">＋</span>
         </div>

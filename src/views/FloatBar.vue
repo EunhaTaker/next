@@ -251,17 +251,17 @@ watch(
 let pomodoroIntervalId: ReturnType<typeof setInterval> | null = null;
 let pomodoroPollId: ReturnType<typeof setInterval> | null = null;
 let pomodoroEndTime = 0;
-// 标记当前是否为番茄钟自动弹出（false = 用户手动唤出）
-let pomodoroAutoShown = false;
 
 function stopPomodoroPoll() {
   if (pomodoroPollId) { clearInterval(pomodoroPollId); pomodoroPollId = null; }
-  pomodoroAutoShown = false;
 }
 
-function triggerPomodoro() {
+async function triggerPomodoro() {
+  // 若用户已手动打开悬浮窗，跳过 T2 自动隐藏，不反转当前显示状态
+  const alreadyVisible = await getCurrentWindow().isVisible().catch(() => false);
   invoke("show_float_window_passive").catch(() => {});
-  pomodoroAutoShown = true;
+  if (alreadyVisible) return;
+
   stopPomodoroPoll();
   pomodoroEndTime = Date.now() + Math.max(1, store.pomodoroDuration) * 1000;
   pomodoroPollId = setInterval(() => {
