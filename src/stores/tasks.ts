@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
 import { ref, computed } from "vue";
-import { load } from "@tauri-apps/plugin-store";
+import Database from "@tauri-apps/plugin-sql";
 import { emit, listen } from "@tauri-apps/api/event";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 
@@ -28,7 +28,7 @@ export interface Task {
   id: string;
   title: string;
   description?: string;
-  dueDate?: string; // ISO 8601 date string
+  dueDate?: string;
   importance: Level;
   urgency: Level;
   desktopId?: number;
@@ -44,24 +44,96 @@ export interface DesktopInfo {
   is_current: boolean;
 }
 
+// ── DB 行类型 ──
+interface TaskRow {
+  id: string;
+  parent_id: string | null;
+  title: string;
+  description: string | null;
+  due_date: string | null;
+  importance: number;
+  urgency: number;
+  desktop_id: number | null;
+  created_at: string;
+  completed: number;
+  sort_order: number;
+}
+
+interface SessionRow {
+  id: number;
+  task_id: string;
+  start: string;
+  end: string | null;
+}
+
+interface FocusRow {
+  focus_id: string;
+  sort_order: number;
+}
+
+// ── DDL ──
+const DDL = `
+CREATE TABLE IF NOT EXISTS tasks (
+  id          TEXT PRIMARY KEY,
+  parent_id   TEXT REFERENCES tasks(id) ON DELETE CASCADE,
+  title       TEXT NOT NULL,
+  description TEXT,
+  due_date    TEXT,
+  importance  INTEGER NOT NULL DEFAULT 2,
+  urgency     INTEGER NOT NULL DEFAULT 2,
+  desktop_id  INTEGER,
+  created_at  TEXT NOT NULL,
+  completed   INTEGER NOT NULL DEFAULT 0,
+  sort_order  INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_tasks_parent    ON tasks(parent_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_completed ON tasks(completed);
+
+CREATE TABLE IF NOT EXISTS time_sessions (
+  id      INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  start   TEXT NOT NULL,
+  end     TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_task_id ON time_sessions(task_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_start   ON time_sessions(start);
+CREATE INDEX IF NOT EXISTS idx_sessions_end     ON time_sessions(end);
+
+CREATE TABLE IF NOT EXISTS focus_order (
+  focus_id   TEXT PRIMARY KEY,
+  sort_order INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS settings (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+`;
+
 export const useTaskStore = defineStore("tasks", () => {
   const tasks = ref<Task[]>([]);
   const desktops = ref<DesktopInfo[]>([]);
-  const focusIds = ref<string[]>([]); // 专注任务 id 列表（有序），可包含子任务 id（格式: "parentId/subtaskId"）
-  const selectedIndex = ref<number | null>(null); // 当前高亮选中的任务索引
-  const pomodoroInterval = ref(25); // 默认25分钟
-  const pomodoroDuration = ref(5);  // 默认5秒
-  let storeInstance: Awaited<ReturnType<typeof load>> | null = null;
+  const focusIds = ref<string[]>([]);
+  const selectedIndex = ref<number | null>(null);
+  const pomodoroInterval = ref(25);
+  const pomodoroDuration = ref(5);
+
+  let db: Database | null = null;
   let _unlistenSync: UnlistenFn | null = null;
 
-  // ── 初始化（从磁盘加载 + 监听跨窗口更新事件）──
+  // ── 初始化 ──
   async function init() {
-    if (!storeInstance) {
-      storeInstance = await load("next-tasks.json", { autoSave: false });
+    if (!db) {
+      db = await Database.load("sqlite:next.db");
+      // 建表（幂等）
+      for (const stmt of DDL.split(";").map(s => s.trim()).filter(Boolean)) {
+        await db.execute(stmt + ";");
+      }
+      // 首次迁移旧 JSON 数据
+      await migrateFromJson();
     }
     await reload();
 
-    // 监听其他窗口的数据变更通知（只注册一次）
     if (!_unlistenSync) {
       _unlistenSync = await listen<void>("tasks-updated", async () => {
         await reload();
@@ -71,178 +143,334 @@ export const useTaskStore = defineStore("tasks", () => {
     try {
       const { invoke } = await import("@tauri-apps/api/core");
       desktops.value = await invoke<DesktopInfo[]>("get_desktops");
-    } catch {
-      // 首次加载桌面失败忽略
+    } catch { /* 首次加载桌面失败忽略 */ }
+  }
+
+  // ── 从旧 JSON 迁移 ──
+  async function migrateFromJson() {
+    if (!db) return;
+    // 检查是否已有数据（已迁移则跳过）
+    const existing = await db.select<{ cnt: number }[]>("SELECT COUNT(*) as cnt FROM tasks");
+    if (existing[0]?.cnt > 0) return;
+
+    try {
+      const { load } = await import("@tauri-apps/plugin-store");
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const oldStore = await (load as any)("next-tasks.json");
+      const oldTasks = await oldStore.get("tasks") as Task[] | null;
+      const oldFocus = await oldStore.get("focusIds") as string[] | null;
+      const oldPomodoro = await oldStore.get("pomodoro") as { interval: number; duration: number } | null;
+
+      if (!oldTasks?.length) return;
+
+      // 迁移设置
+      if (oldPomodoro) {
+        await db.execute(
+          "INSERT OR REPLACE INTO settings(key, value) VALUES ('pomodoro_interval', ?), ('pomodoro_duration', ?)",
+          [String(oldPomodoro.interval), String(oldPomodoro.duration)]
+        );
+      }
+
+      // 迁移任务（顶级）
+      for (let i = 0; i < oldTasks.length; i++) {
+        const t = oldTasks[i];
+        await db.execute(
+          `INSERT OR IGNORE INTO tasks(id, parent_id, title, description, due_date, importance, urgency, desktop_id, created_at, completed, sort_order)
+           VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [t.id, t.title, t.description ?? null, t.dueDate ?? null,
+           t.importance, t.urgency, t.desktopId ?? null,
+           t.createdAt, t.completed ? 1 : 0, i]
+        );
+        // 计时记录
+        for (const s of t.timeSessions ?? []) {
+          await db.execute(
+            "INSERT INTO time_sessions(task_id, start, end) VALUES (?, ?, ?)",
+            [t.id, s.start, s.end ?? null]
+          );
+        }
+        // 子任务
+        for (let j = 0; j < (t.subtasks ?? []).length; j++) {
+          const sub = t.subtasks![j];
+          await db.execute(
+            `INSERT OR IGNORE INTO tasks(id, parent_id, title, description, due_date, importance, urgency, desktop_id, created_at, completed, sort_order)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [sub.id, t.id, sub.title, sub.description ?? null, sub.dueDate ?? null,
+             sub.importance, sub.urgency, sub.desktopId ?? null,
+             sub.createdAt, sub.completed ? 1 : 0, j]
+          );
+          for (const s of sub.timeSessions ?? []) {
+            await db.execute(
+              "INSERT INTO time_sessions(task_id, start, end) VALUES (?, ?, ?)",
+              [sub.id, s.start, s.end ?? null]
+            );
+          }
+        }
+      }
+
+      // 迁移专注顺序
+      for (let i = 0; i < (oldFocus ?? []).length; i++) {
+        await db.execute(
+          "INSERT OR REPLACE INTO focus_order(focus_id, sort_order) VALUES (?, ?)",
+          [oldFocus![i], i]
+        );
+      }
+
+      console.log("✅ 数据已从 next-tasks.json 迁移到 SQLite");
+    } catch (e) {
+      console.warn("旧数据迁移跳过:", e);
     }
   }
 
+  // ── 从 DB 重新加载所有数据到内存 ──
   async function reload() {
-    if (!storeInstance) return;
-    const savedTasks = await storeInstance.get<Task[]>("tasks");
-    const savedFocus = await storeInstance.get<string[]>("focusIds");
-    const savedPomodoro = await storeInstance.get<{ interval: number; duration: number }>("pomodoro");
-    if (savedTasks) tasks.value = savedTasks;
-    if (savedFocus) focusIds.value = savedFocus;
-    if (savedPomodoro) {
-      pomodoroInterval.value = savedPomodoro.interval;
-      pomodoroDuration.value = savedPomodoro.duration;
+    if (!db) return;
+
+    // 加载所有任务行
+    const rows = await db.select<TaskRow[]>(
+      "SELECT * FROM tasks ORDER BY sort_order ASC, created_at ASC"
+    );
+    // 加载所有计时记录
+    const sessions = await db.select<SessionRow[]>(
+      "SELECT * FROM time_sessions ORDER BY start ASC"
+    );
+
+    // 按 task_id 分组 sessions
+    const sessionMap = new Map<string, TimeSession[]>();
+    for (const s of sessions) {
+      const arr = sessionMap.get(s.task_id) ?? [];
+      arr.push({ start: s.start, end: s.end ?? undefined });
+      sessionMap.set(s.task_id, arr);
+    }
+
+    // 构建 Task 树
+    const topLevel: Task[] = [];
+    const taskMap = new Map<string, Task & { _subtaskRows: TaskRow[] }>();
+
+    // 先建顶级任务
+    for (const row of rows.filter(r => r.parent_id === null)) {
+      const t: Task & { _subtaskRows: TaskRow[] } = {
+        id: row.id,
+        title: row.title,
+        description: row.description ?? undefined,
+        dueDate: row.due_date ?? undefined,
+        importance: row.importance as Level,
+        urgency: row.urgency as Level,
+        desktopId: row.desktop_id ?? undefined,
+        createdAt: row.created_at,
+        completed: row.completed === 1,
+        subtasks: [],
+        timeSessions: sessionMap.get(row.id) ?? [],
+        _subtaskRows: [],
+      };
+      taskMap.set(row.id, t);
+      topLevel.push(t);
+    }
+
+    // 挂载子任务
+    for (const row of rows.filter(r => r.parent_id !== null)) {
+      const parent = taskMap.get(row.parent_id!);
+      if (!parent) continue;
+      const sub: SubTask = {
+        id: row.id,
+        title: row.title,
+        description: row.description ?? undefined,
+        dueDate: row.due_date ?? undefined,
+        importance: row.importance as Level,
+        urgency: row.urgency as Level,
+        desktopId: row.desktop_id ?? undefined,
+        createdAt: row.created_at,
+        completed: row.completed === 1,
+        timeSessions: sessionMap.get(row.id) ?? [],
+      };
+      parent.subtasks!.push(sub);
+    }
+
+    tasks.value = topLevel;
+
+    // 专注顺序
+    const focusRows = await db.select<FocusRow[]>(
+      "SELECT focus_id FROM focus_order ORDER BY sort_order ASC"
+    );
+    focusIds.value = focusRows.map(r => r.focus_id);
+
+    // 设置
+    const settings = await db.select<{ key: string; value: string }[]>(
+      "SELECT key, value FROM settings"
+    );
+    for (const s of settings) {
+      if (s.key === "pomodoro_interval") pomodoroInterval.value = Number(s.value);
+      if (s.key === "pomodoro_duration") pomodoroDuration.value = Number(s.value);
     }
   }
 
-  async function persist() {
-    if (!storeInstance) return;
-    await storeInstance.set("tasks", tasks.value);
-    await storeInstance.set("focusIds", focusIds.value);
-    await storeInstance.set("pomodoro", { interval: pomodoroInterval.value, duration: pomodoroDuration.value });
-    await storeInstance.save();
-    // 通知所有窗口数据已更新
+  // ── 通知其他窗口同步 ──
+  function notifyOthers() {
     emit("tasks-updated").catch(() => {});
   }
 
   // ── 任务 CRUD ──
-  function addTask(partial: Omit<Task, "id" | "createdAt" | "completed">) {
-    const task: Task = {
-      ...partial,
-      id: crypto.randomUUID(),
-      createdAt: new Date().toISOString(),
-      completed: false,
-      subtasks: [],
-    };
-    tasks.value.unshift(task);
-    persist();
-    return task;
+  async function addTask(partial: Omit<Task, "id" | "createdAt" | "completed">) {
+    if (!db) return;
+    const id = crypto.randomUUID();
+    const createdAt = new Date().toISOString();
+    await db.execute(
+      `INSERT INTO tasks(id, parent_id, title, description, due_date, importance, urgency, desktop_id, created_at, completed, sort_order)
+       VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, 0, 0)`,
+      [id, partial.title, partial.description ?? null, partial.dueDate ?? null,
+       partial.importance, partial.urgency, partial.desktopId ?? null, createdAt]
+    );
+    await reload();
+    notifyOthers();
   }
 
-  function updateTask(id: string, patch: Partial<Omit<Task, "id">>) {
-    const idx = tasks.value.findIndex((t) => t.id === id);
-    if (idx < 0) return;
-    tasks.value[idx] = { ...tasks.value[idx], ...patch };
-    persist();
+  async function updateTask(id: string, patch: Partial<Omit<Task, "id">>) {
+    if (!db) return;
+    const fields: string[] = [];
+    const vals: unknown[] = [];
+    if (patch.title !== undefined)       { fields.push("title = ?");       vals.push(patch.title); }
+    if (patch.description !== undefined) { fields.push("description = ?"); vals.push(patch.description ?? null); }
+    if (patch.dueDate !== undefined)     { fields.push("due_date = ?");    vals.push(patch.dueDate ?? null); }
+    if (patch.importance !== undefined)  { fields.push("importance = ?");  vals.push(patch.importance); }
+    if (patch.urgency !== undefined)     { fields.push("urgency = ?");     vals.push(patch.urgency); }
+    if (patch.desktopId !== undefined)   { fields.push("desktop_id = ?");  vals.push(patch.desktopId ?? null); }
+    if (patch.completed !== undefined)   { fields.push("completed = ?");   vals.push(patch.completed ? 1 : 0); }
+    if (!fields.length) return;
+    vals.push(id);
+    await db.execute(`UPDATE tasks SET ${fields.join(", ")} WHERE id = ?`, vals);
+    await reload();
+    notifyOthers();
   }
 
-  function deleteTask(id: string) {
-    // 删除任务时，同时清理其子任务在 focusIds 中的引用
+  async function deleteTask(id: string) {
+    if (!db) return;
+    // 清理子任务在 focus_order 中的引用
     const task = tasks.value.find(t => t.id === id);
-    if (task?.subtasks) {
-      for (const sub of task.subtasks) {
-        focusIds.value = focusIds.value.filter(fid => fid !== `${id}/${sub.id}`);
-      }
+    for (const sub of task?.subtasks ?? []) {
+      await db.execute("DELETE FROM focus_order WHERE focus_id = ?", [`${id}/${sub.id}`]);
     }
-    tasks.value = tasks.value.filter((t) => t.id !== id);
-    focusIds.value = focusIds.value.filter((fid) => fid !== id);
-    persist();
+    await db.execute("DELETE FROM focus_order WHERE focus_id = ?", [id]);
+    await db.execute("DELETE FROM tasks WHERE id = ?", [id]); // CASCADE 删子任务和 sessions
+    await reload();
+    notifyOthers();
   }
 
-  function toggleComplete(id: string) {
-    const t = tasks.value.find((t) => t.id === id);
-    if (t) {
-      t.completed = !t.completed;
-      // 任务完成后从专注列表移除（包括其子任务）
-      if (t.completed) {
-        focusIds.value = focusIds.value.filter((fid) => fid !== id && !fid.startsWith(`${id}/`));
-      }
+  async function toggleComplete(id: string) {
+    if (!db) return;
+    const t = tasks.value.find(t => t.id === id);
+    if (!t) return;
+    const newVal = t.completed ? 0 : 1;
+    await db.execute("UPDATE tasks SET completed = ? WHERE id = ?", [newVal, id]);
+    if (newVal === 1) {
+      // 完成后从专注列表移除（包括子任务）
+      await db.execute("DELETE FROM focus_order WHERE focus_id = ? OR focus_id LIKE ?", [id, `${id}/%`]);
     }
-    persist();
+    await reload();
+    notifyOthers();
   }
 
   // ── 子任务 CRUD ──
-  function addSubTask(parentId: string, partial: Omit<SubTask, "id" | "createdAt" | "completed">) {
+  async function addSubTask(parentId: string, partial: Omit<SubTask, "id" | "createdAt" | "completed">) {
+    if (!db) return;
+    const id = crypto.randomUUID();
+    const createdAt = new Date().toISOString();
     const parent = tasks.value.find(t => t.id === parentId);
-    if (!parent) return;
-    if (!parent.subtasks) parent.subtasks = [];
-    const sub: SubTask = {
-      ...partial,
-      id: crypto.randomUUID(),
-      completed: false,
-      createdAt: new Date().toISOString(),
-    };
-    parent.subtasks.push(sub);
-    persist();
-    return sub;
+    const sortOrder = (parent?.subtasks?.length ?? 0);
+    await db.execute(
+      `INSERT INTO tasks(id, parent_id, title, description, due_date, importance, urgency, desktop_id, created_at, completed, sort_order)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+      [id, parentId, partial.title, partial.description ?? null, partial.dueDate ?? null,
+       partial.importance, partial.urgency, partial.desktopId ?? null, createdAt, sortOrder]
+    );
+    await reload();
+    notifyOthers();
   }
 
-  function updateSubTask(parentId: string, subId: string, patch: Partial<Omit<SubTask, "id" | "createdAt">>) {
-    const parent = tasks.value.find(t => t.id === parentId);
-    if (!parent?.subtasks) return;
-    const idx = parent.subtasks.findIndex(s => s.id === subId);
-    if (idx < 0) return;
-    parent.subtasks[idx] = { ...parent.subtasks[idx], ...patch };
-    persist();
+  async function updateSubTask(_parentId: string, subId: string, patch: Partial<Omit<SubTask, "id" | "createdAt">>) {
+    if (!db) return;
+    // 复用 updateTask 逻辑（子任务也在 tasks 表）
+    await updateTask(subId, patch);
   }
 
-  function deleteSubTask(parentId: string, subId: string) {
-    const parent = tasks.value.find(t => t.id === parentId);
-    if (!parent?.subtasks) return;
-    parent.subtasks = parent.subtasks.filter(s => s.id !== subId);
-    focusIds.value = focusIds.value.filter(fid => fid !== `${parentId}/${subId}`);
-    persist();
+  async function deleteSubTask(parentId: string, subId: string) {
+    if (!db) return;
+    await db.execute("DELETE FROM focus_order WHERE focus_id = ?", [`${parentId}/${subId}`]);
+    await db.execute("DELETE FROM tasks WHERE id = ?", [subId]);
+    await reload();
+    notifyOthers();
   }
 
-  function toggleSubTaskComplete(parentId: string, subId: string) {
+  async function toggleSubTaskComplete(parentId: string, subId: string) {
+    if (!db) return;
     const parent = tasks.value.find(t => t.id === parentId);
-    if (!parent?.subtasks) return;
-    const sub = parent.subtasks.find(s => s.id === subId);
-    if (sub) {
-      sub.completed = !sub.completed;
-      // 子任务完成后从专注列表移除
-      if (sub.completed) {
-        focusIds.value = focusIds.value.filter(fid => fid !== `${parentId}/${subId}`);
-      }
+    const sub = parent?.subtasks?.find(s => s.id === subId);
+    if (!sub) return;
+    const newVal = sub.completed ? 0 : 1;
+    await db.execute("UPDATE tasks SET completed = ? WHERE id = ?", [newVal, subId]);
+    if (newVal === 1) {
+      await db.execute("DELETE FROM focus_order WHERE focus_id = ?", [`${parentId}/${subId}`]);
     }
-    persist();
+    await reload();
+    notifyOthers();
   }
 
   // ── 专注列表管理 ──
-  function addToFocus(id: string) {
-    if (!focusIds.value.includes(id)) {
-      focusIds.value.unshift(id);
-      persist();
-    }
+  async function addToFocus(id: string) {
+    if (!db || focusIds.value.includes(id)) return;
+    // 插入到最前（sort_order = -1，然后重新归一化）
+    const newIds = [id, ...focusIds.value];
+    await persistFocusOrder(newIds);
+    await reload();
+    notifyOthers();
   }
 
-  function removeFromFocus(id: string) {
-    focusIds.value = focusIds.value.filter((fid) => fid !== id);
-    persist();
+  async function removeFromFocus(id: string) {
+    if (!db) return;
+    await db.execute("DELETE FROM focus_order WHERE focus_id = ?", [id]);
+    await reload();
+    notifyOthers();
   }
 
-  function moveFocus(id: string, direction: "up" | "down") {
+  async function moveFocus(id: string, direction: "up" | "down") {
     const idx = focusIds.value.indexOf(id);
+    const newIds = [...focusIds.value];
     if (direction === "up" && idx > 0) {
-      [focusIds.value[idx - 1], focusIds.value[idx]] = [
-        focusIds.value[idx],
-        focusIds.value[idx - 1],
-      ];
-    } else if (direction === "down" && idx < focusIds.value.length - 1) {
-      [focusIds.value[idx], focusIds.value[idx + 1]] = [
-        focusIds.value[idx + 1],
-        focusIds.value[idx],
-      ];
+      [newIds[idx - 1], newIds[idx]] = [newIds[idx], newIds[idx - 1]];
+    } else if (direction === "down" && idx < newIds.length - 1) {
+      [newIds[idx], newIds[idx + 1]] = [newIds[idx + 1], newIds[idx]];
+    } else return;
+    await persistFocusOrder(newIds);
+    await reload();
+    notifyOthers();
+  }
+
+  async function pinToTop(id: string) {
+    const newIds = [id, ...focusIds.value.filter(fid => fid !== id)];
+    await persistFocusOrder(newIds);
+    await reload();
+    notifyOthers();
+  }
+
+  async function reorderFocus(newIds: string[]) {
+    await persistFocusOrder(newIds);
+    await reload();
+    notifyOthers();
+  }
+
+  async function persistFocusOrder(ids: string[]) {
+    if (!db) return;
+    await db.execute("DELETE FROM focus_order");
+    for (let i = 0; i < ids.length; i++) {
+      await db.execute(
+        "INSERT INTO focus_order(focus_id, sort_order) VALUES (?, ?)",
+        [ids[i], i]
+      );
     }
-    persist();
-  }
-
-  function pinToTop(id: string) {
-    focusIds.value = focusIds.value.filter((fid) => fid !== id);
-    focusIds.value.unshift(id);
-    persist();
-  }
-
-  function reorderFocus(newIds: string[]) {
-    focusIds.value = newIds;
-    persist();
   }
 
   function setSelectedIndex(index: number | null) {
-    if (index === null) {
-      selectedIndex.value = null;
-      return;
-    }
-    if (focusIds.value.length === 0) {
-      selectedIndex.value = null;
-      return;
-    }
-    const max = focusIds.value.length - 1;
-    selectedIndex.value = Math.max(0, Math.min(index, max));
+    if (index === null) { selectedIndex.value = null; return; }
+    if (focusIds.value.length === 0) { selectedIndex.value = null; return; }
+    selectedIndex.value = Math.max(0, Math.min(index, focusIds.value.length - 1));
   }
 
   function getDesktopName(id?: number): string {
@@ -252,13 +480,17 @@ export const useTaskStore = defineStore("tasks", () => {
   }
 
   async function savePomodoroSettings(interval: number, duration: number) {
+    if (!db) return;
     pomodoroInterval.value = interval;
     pomodoroDuration.value = duration;
-    await persist();
+    await db.execute(
+      "INSERT OR REPLACE INTO settings(key, value) VALUES ('pomodoro_interval', ?), ('pomodoro_duration', ?)",
+      [String(interval), String(duration)]
+    );
+    notifyOthers();
   }
 
-  // ── 计时功能 ──
-  // 判断某个 focusId 是否正在计时（有未关闭的 session）
+  // ── 计时功能（同步从内存读，DB 写通过 toggleTimer）──
   function isTimerRunning(focusId: string): boolean {
     const sessions = getTimeSessions(focusId);
     return sessions.length > 0 && !sessions[sessions.length - 1].end;
@@ -275,56 +507,49 @@ export const useTaskStore = defineStore("tasks", () => {
     return task?.timeSessions ?? [];
   }
 
-  function toggleTimer(focusId: string) {
-    if (focusId.includes("/")) {
-      const [parentId, subId] = focusId.split("/");
-      const parent = tasks.value.find(t => t.id === parentId);
-      const sub = parent?.subtasks?.find(s => s.id === subId);
-      if (!sub) return;
-      if (!sub.timeSessions) sub.timeSessions = [];
-      const last = sub.timeSessions[sub.timeSessions.length - 1];
-      if (last && !last.end) {
-        last.end = new Date().toISOString();
-      } else {
-        sub.timeSessions.push({ start: new Date().toISOString() });
-      }
+  async function toggleTimer(focusId: string) {
+    if (!db) return;
+    const taskId = focusId.includes("/") ? focusId.split("/")[1] : focusId;
+    // 查找未关闭的 session
+    const openRows = await db.select<SessionRow[]>(
+      "SELECT * FROM time_sessions WHERE task_id = ? AND end IS NULL ORDER BY start DESC LIMIT 1",
+      [taskId]
+    );
+    if (openRows.length > 0) {
+      // 关闭计时
+      await db.execute(
+        "UPDATE time_sessions SET end = ? WHERE id = ?",
+        [new Date().toISOString(), openRows[0].id]
+      );
     } else {
-      const task = tasks.value.find(t => t.id === focusId);
-      if (!task) return;
-      if (!task.timeSessions) task.timeSessions = [];
-      const last = task.timeSessions[task.timeSessions.length - 1];
-      if (last && !last.end) {
-        last.end = new Date().toISOString();
-      } else {
-        task.timeSessions.push({ start: new Date().toISOString() });
-      }
+      // 开始计时
+      await db.execute(
+        "INSERT INTO time_sessions(task_id, start) VALUES (?, ?)",
+        [taskId, new Date().toISOString()]
+      );
     }
-    persist();
+    await reload();
+    notifyOthers();
   }
 
-  // ── 解析 focusId（支持子任务格式 "parentId/subId"）──
+  // ── 解析 focusId ──
   function resolveFocusId(focusId: string): { task: Task | null; subtask: SubTask | null; desktopId?: number } {
     if (focusId.includes("/")) {
       const [parentId, subId] = focusId.split("/");
       const parent = tasks.value.find(t => t.id === parentId) ?? null;
       const sub = parent?.subtasks?.find(s => s.id === subId) ?? null;
-      const desktopId = sub?.desktopId ?? parent?.desktopId;
-      return { task: parent, subtask: sub, desktopId };
+      return { task: parent, subtask: sub, desktopId: sub?.desktopId ?? parent?.desktopId };
     }
     const task = tasks.value.find(t => t.id === focusId) ?? null;
     return { task, subtask: null, desktopId: task?.desktopId };
   }
 
   // ── 计算属性 ──
-  const pendingTasks = computed(() =>
-    tasks.value.filter((t) => !t.completed)
-  );
+  const pendingTasks = computed(() => tasks.value.filter(t => !t.completed));
 
-  // focusTasks: 将 focusIds 中的每一个 id 解析为一个展示对象
-  // 用于悬浮窗列表渲染，包含 isSubTask 标记
   const focusTasks = computed(() =>
     focusIds.value
-      .map((fid) => {
+      .map(fid => {
         if (fid.includes("/")) {
           const [parentId, subId] = fid.split("/");
           const parent = tasks.value.find(t => t.id === parentId);
@@ -350,24 +575,16 @@ export const useTaskStore = defineStore("tasks", () => {
   );
 
   const notFocusTasks = computed(() =>
-    tasks.value.filter((t) => !t.completed && !focusIds.value.includes(t.id))
+    tasks.value.filter(t => !t.completed && !focusIds.value.includes(t.id))
   );
 
   const quadrants = computed(() => {
     const pending = pendingTasks.value;
     return {
-      urgentImportant: pending.filter(
-        (t) => t.urgency >= 2 && t.importance >= 2
-      ),
-      urgentNotImportant: pending.filter(
-        (t) => t.urgency >= 2 && t.importance === 1
-      ),
-      notUrgentImportant: pending.filter(
-        (t) => t.urgency === 1 && t.importance >= 2
-      ),
-      neither: pending.filter(
-        (t) => t.urgency === 1 && t.importance === 1
-      ),
+      urgentImportant:    pending.filter(t => t.urgency >= 2 && t.importance >= 2),
+      urgentNotImportant: pending.filter(t => t.urgency >= 2 && t.importance === 1),
+      notUrgentImportant: pending.filter(t => t.urgency === 1 && t.importance >= 2),
+      neither:            pending.filter(t => t.urgency === 1 && t.importance === 1),
     };
   });
 
