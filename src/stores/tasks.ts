@@ -6,6 +6,11 @@ import type { UnlistenFn } from "@tauri-apps/api/event";
 
 export type Level = 1 | 2 | 3; // 1=低 2=中 3=高
 
+export interface TimeSession {
+  start: string; // ISO 8601
+  end?: string;  // undefined 表示正在计时
+}
+
 export interface SubTask {
   id: string;
   title: string;
@@ -16,6 +21,7 @@ export interface SubTask {
   desktopId?: number;
   completed: boolean;
   createdAt: string;
+  timeSessions?: TimeSession[];
 }
 
 export interface Task {
@@ -29,6 +35,7 @@ export interface Task {
   createdAt: string;
   completed: boolean;
   subtasks?: SubTask[];
+  timeSessions?: TimeSession[];
 }
 
 export interface DesktopInfo {
@@ -250,6 +257,51 @@ export const useTaskStore = defineStore("tasks", () => {
     await persist();
   }
 
+  // ── 计时功能 ──
+  // 判断某个 focusId 是否正在计时（有未关闭的 session）
+  function isTimerRunning(focusId: string): boolean {
+    const sessions = getTimeSessions(focusId);
+    return sessions.length > 0 && !sessions[sessions.length - 1].end;
+  }
+
+  function getTimeSessions(focusId: string): TimeSession[] {
+    if (focusId.includes("/")) {
+      const [parentId, subId] = focusId.split("/");
+      const parent = tasks.value.find(t => t.id === parentId);
+      const sub = parent?.subtasks?.find(s => s.id === subId);
+      return sub?.timeSessions ?? [];
+    }
+    const task = tasks.value.find(t => t.id === focusId);
+    return task?.timeSessions ?? [];
+  }
+
+  function toggleTimer(focusId: string) {
+    if (focusId.includes("/")) {
+      const [parentId, subId] = focusId.split("/");
+      const parent = tasks.value.find(t => t.id === parentId);
+      const sub = parent?.subtasks?.find(s => s.id === subId);
+      if (!sub) return;
+      if (!sub.timeSessions) sub.timeSessions = [];
+      const last = sub.timeSessions[sub.timeSessions.length - 1];
+      if (last && !last.end) {
+        last.end = new Date().toISOString();
+      } else {
+        sub.timeSessions.push({ start: new Date().toISOString() });
+      }
+    } else {
+      const task = tasks.value.find(t => t.id === focusId);
+      if (!task) return;
+      if (!task.timeSessions) task.timeSessions = [];
+      const last = task.timeSessions[task.timeSessions.length - 1];
+      if (last && !last.end) {
+        last.end = new Date().toISOString();
+      } else {
+        task.timeSessions.push({ start: new Date().toISOString() });
+      }
+    }
+    persist();
+  }
+
   // ── 解析 focusId（支持子任务格式 "parentId/subId"）──
   function resolveFocusId(focusId: string): { task: Task | null; subtask: SubTask | null; desktopId?: number } {
     if (focusId.includes("/")) {
@@ -348,5 +400,8 @@ export const useTaskStore = defineStore("tasks", () => {
     pomodoroDuration,
     savePomodoroSettings,
     resolveFocusId,
+    isTimerRunning,
+    getTimeSessions,
+    toggleTimer,
   };
 });

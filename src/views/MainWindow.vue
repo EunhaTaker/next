@@ -166,7 +166,15 @@
                 :class="{ active: expandedIds.has(task.id) }"
                 :title="expandedIds.has(task.id) ? '折叠子任务' : '展开子任务'"
                 @click="toggleExpand(task.id)"
-              >{{ expandedIds.has(task.id) ? '▼' : '▶' }}</button>
+              >{{ expandedIds.has(task.id) ? '▾' : '▸' }}</button>
+              <div class="timer-wrap-m" @mouseenter="showTimerTip(task.id, $event)" @mouseleave="hideTimerTip">
+                <button
+                  class="btn-icon timer-btn-m"
+                  :class="{ running: store.isTimerRunning(task.id) }"
+                  :title="store.isTimerRunning(task.id) ? '暂停计时' : '开始计时'"
+                  @click="store.toggleTimer(task.id)"
+                >⏱</button>
+              </div>
               <button
                 class="btn-icon"
                 :class="{ active: store.focusIds.includes(task.id) }"
@@ -197,6 +205,14 @@
                 <span v-if="sub.desktopId !== undefined" class="task-card-desktop"> · 🖥 {{ store.getDesktopName(sub.desktopId) }}</span>
               </div>
               <div class="subtask-row-actions">
+                <div class="timer-wrap-m" @mouseenter="showTimerTip(`${task.id}/${sub.id}`, $event)" @mouseleave="hideTimerTip">
+                  <button
+                    class="btn-icon timer-btn-m"
+                    :class="{ running: store.isTimerRunning(`${task.id}/${sub.id}`) }"
+                    :title="store.isTimerRunning(`${task.id}/${sub.id}`) ? '暂停计时' : '开始计时'"
+                    @click="store.toggleTimer(`${task.id}/${sub.id}`)"
+                  >⏱</button>
+                </div>
                 <button
                   class="btn-icon"
                   :class="{ active: store.focusIds.includes(`${task.id}/${sub.id}`) }"
@@ -259,6 +275,19 @@
       @save="handleSave"
     />
   </div>
+
+  <!-- 计时 Tooltip -->
+  <Teleport to="body">
+    <div v-if="mTimerTip.visible" class="g-timer-tooltip" :style="{ top: mTimerTip.y + 'px', left: mTimerTip.x + 'px', width: mTimerTip.w + 'px' }">
+      <div class="g-tt-title">计时记录</div>
+      <div v-if="!mTimerTip.sessions.length" class="g-tt-empty">暂无记录</div>
+      <div v-for="(s, i) in mTimerTip.sessions" :key="i" class="g-tt-row">
+        <span class="g-tt-idx">#{{ i + 1 }}</span>
+        <span class="g-tt-range">{{ formatSession(s) }}</span>
+        <span class="g-tt-dur">{{ sessionDuration(s) }}</span>
+      </div>
+    </div>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
@@ -266,7 +295,7 @@ import { ref, computed, onMounted } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useTaskStore } from "../stores/tasks";
 import TaskEditor from "../components/TaskEditor.vue";
-import type { Task, Level } from "../stores/tasks";
+import type { Task, Level, TimeSession } from "../stores/tasks";
 
 const appWindow = getCurrentWindow();
 
@@ -367,6 +396,48 @@ function formatDate(d: string) {
 }
 function isOverdue(d: string) {
   return new Date(d) < new Date();
+}
+
+// ── 计时 Tooltip ──
+const mTimerTip = ref<{ visible: boolean; sessions: TimeSession[]; y: number; x: number; w: number }>({
+  visible: false, sessions: [], y: 0, x: 0, w: 300,
+});
+let _mTipTimer: ReturnType<typeof setTimeout> | null = null;
+
+function showTimerTip(focusId: string, e: MouseEvent) {
+  if (_mTipTimer) { clearTimeout(_mTipTimer); _mTipTimer = null; }
+  const target = e.currentTarget as HTMLElement;
+  const rect = target.getBoundingClientRect();
+  const w = Math.min(300, window.innerWidth - 16);
+  const x = Math.max(8, Math.min(rect.left, window.innerWidth - w - 8));
+  mTimerTip.value = {
+    visible: true,
+    sessions: [...store.getTimeSessions(focusId)],
+    y: rect.bottom + 6,
+    x,
+    w,
+  };
+}
+
+function hideTimerTip() {
+  _mTipTimer = setTimeout(() => { mTimerTip.value.visible = false; }, 120);
+}
+
+function formatSession(s: TimeSession): string {
+  const fmt = (iso: string) => new Date(iso).toLocaleString('zh-CN', {
+    month: 'numeric', day: 'numeric',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  });
+  return s.end ? `${fmt(s.start)} → ${fmt(s.end)}` : `${fmt(s.start)} → 进行中`;
+}
+
+function sessionDuration(s: TimeSession): string {
+  const ms = (s.end ? new Date(s.end) : new Date()).getTime() - new Date(s.start).getTime();
+  const t = Math.floor(ms / 1000);
+  const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), sec = t % 60;
+  if (h > 0) return `${h}h${m}m`;
+  if (m > 0) return `${m}m${sec}s`;
+  return `${sec}s`;
 }
 </script>
 
@@ -735,7 +806,7 @@ function isOverdue(d: string) {
 }
 
 /* ─ 展开按钮 ─ */
-.expand-btn { color: var(--text-muted); font-size: 10px; }
+.expand-btn { color: var(--text-muted); font-size: 12px; }
 .expand-btn:hover, .expand-btn.active { color: var(--accent); }
 
 /* ─ 子任务行 ─ */
@@ -783,6 +854,20 @@ function isOverdue(d: string) {
   display: flex;
   gap: 2px;
   flex-shrink: 0;
+}
+
+/* ─ 计时按钮 ─ */
+.timer-wrap-m { display: flex; align-items: center; }
+.timer-btn-m {
+  color: var(--text-muted);
+  font-size: 13px;
+  transition: color var(--transition), background var(--transition);
+}
+.timer-btn-m:hover { color: var(--accent); }
+.timer-btn-m.running {
+  color: var(--success);
+  background: rgba(94, 147, 117, 0.12);
+  border-radius: 4px;
 }
 
 </style>

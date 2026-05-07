@@ -62,6 +62,15 @@
 
         <!-- 操作右侧 -->
         <div class="float-item-actions">
+          <!-- 计时按钮 -->
+          <div class="timer-wrap" @mouseenter="showTimerTip(task.focusId, $event)" @mouseleave="hideTimerTip">
+            <button
+              class="btn-icon timer-btn"
+              :class="{ running: store.isTimerRunning(task.focusId) }"
+              :title="store.isTimerRunning(task.focusId) ? '暂停计时' : '开始计时'"
+              @click.stop="store.toggleTimer(task.focusId)"
+            >⏱</button>
+          </div>
           <button
             v-if="task.desktopId !== undefined"
             class="btn-icon"
@@ -89,6 +98,14 @@
           </div>
         </div>
         <div class="float-item-actions">
+          <div class="timer-wrap" @mouseenter="showTimerTip(firstParentTask.id, $event)" @mouseleave="hideTimerTip">
+            <button
+              class="btn-icon timer-btn"
+              :class="{ running: store.isTimerRunning(firstParentTask.id) }"
+              :title="store.isTimerRunning(firstParentTask.id) ? '暂停计时' : '开始计时'"
+              @click.stop="store.toggleTimer(firstParentTask.id)"
+            >⏱</button>
+          </div>
           <button v-if="firstParentTask.desktopId !== undefined" class="btn-icon" title="切换到对应桌面" @click="switchDesktop(firstParentTask.desktopId!)">→</button>
         </div>
       </div>
@@ -111,6 +128,14 @@
           </div>
         </div>
         <div class="float-item-actions">
+          <div class="timer-wrap" @mouseenter="showTimerTip(`${firstParentTask.id}/${sub.id}`, $event)" @mouseleave="hideTimerTip">
+            <button
+              class="btn-icon timer-btn"
+              :class="{ running: store.isTimerRunning(`${firstParentTask.id}/${sub.id}`) }"
+              :title="store.isTimerRunning(`${firstParentTask.id}/${sub.id}`) ? '暂停计时' : '开始计时'"
+              @click.stop="store.toggleTimer(`${firstParentTask.id}/${sub.id}`)"
+            >⏱</button>
+          </div>
           <button v-if="sub.desktopId !== undefined" class="btn-icon" title="切换到对应桌面" @click="switchDesktop(sub.desktopId!)">→</button>
         </div>
       </div>
@@ -139,6 +164,23 @@
     <!-- TaskPicker 弹窗 -->
     <TaskPicker v-if="showPicker" @close="showPicker = false" />
   </div>
+
+  <!-- 计时记录 Tooltip：Teleport 到 body，position:fixed 悬浮在按鈕下方 -->
+  <Teleport to="body">
+    <div
+      v-if="timerTip.visible"
+      class="g-timer-tooltip"
+      :style="{ top: timerTip.y + 'px', left: timerTip.x + 'px', width: timerTip.w + 'px' }"
+    >
+      <div class="g-tt-title">计时记录</div>
+      <div v-if="!timerTip.sessions.length" class="g-tt-empty">暂无记录</div>
+      <div v-for="(s, i) in timerTip.sessions" :key="i" class="g-tt-row">
+        <span class="g-tt-idx">#{{ i + 1 }}</span>
+        <span class="g-tt-range">{{ formatSession(s) }}</span>
+        <span class="g-tt-dur">{{ sessionDuration(s) }}</span>
+      </div>
+    </div>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
@@ -146,8 +188,10 @@ import { ref, onMounted, onUnmounted, watch, computed } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { useTaskStore } from "../stores/tasks";
 import TaskPicker from "../components/TaskPicker.vue";
+import type { TimeSession } from "../stores/tasks";
 
 const store = useTaskStore();
 const showPicker = ref(false);
@@ -185,13 +229,17 @@ watch(
 let pomodoroIntervalId: ReturnType<typeof setInterval> | null = null;
 let pomodoroPollId: ReturnType<typeof setInterval> | null = null;
 let pomodoroEndTime = 0;
+// 标记当前是否为番茄钟自动弹出（false = 用户手动唤出）
+let pomodoroAutoShown = false;
 
 function stopPomodoroPoll() {
   if (pomodoroPollId) { clearInterval(pomodoroPollId); pomodoroPollId = null; }
+  pomodoroAutoShown = false;
 }
 
 function triggerPomodoro() {
   invoke("show_float_window_passive").catch(() => {});
+  pomodoroAutoShown = true;
   stopPomodoroPoll();
   pomodoroEndTime = Date.now() + Math.max(1, store.pomodoroDuration) * 1000;
   pomodoroPollId = setInterval(() => {
@@ -227,6 +275,15 @@ function handleKeydown(e: KeyboardEvent) {
   if (e.key === "t" && store.selectedIndex !== null) {
     e.preventDefault();
     toggleSplitView();
+    return;
+  }
+
+  // ctrl+alt+space：对第一个专注任务开始/暂停计时
+  if (e.ctrlKey && e.altKey && e.code === "Space") {
+    e.preventDefault();
+    if (store.focusTasks.length > 0) {
+      store.toggleTimer(store.focusTasks[0].focusId);
+    }
     return;
   }
 
@@ -292,7 +349,10 @@ function handleKeydown(e: KeyboardEvent) {
   }
 }
 
-onMounted(() => {
+let _unlistenUserShow: (() => void) | null = null;
+let _unlistenToggleTimer: (() => void) | null = null;
+
+onMounted(async () => {
   document.documentElement.style.background = 'transparent';
   document.body.style.background = 'transparent';
   const app = document.getElementById('app');
@@ -300,12 +360,26 @@ onMounted(() => {
   store.init().then(() => setupPomodoro());
   adjustHeight(store.focusTasks.length);
   window.addEventListener("keydown", handleKeydown);
+
+  // 用户手动唤出悬浮窗时取消番茄钟 T2 自动隐藏（不影响 T1 周期）
+  _unlistenUserShow = await listen("user-show-float", () => {
+    stopPomodoroPoll();
+  });
+
+  // ctrl+alt+space 触发第一个专注任务的计时切换
+  _unlistenToggleTimer = await listen("toggle-first-timer", () => {
+    if (store.focusTasks.length > 0) {
+      store.toggleTimer(store.focusTasks[0].focusId);
+    }
+  });
 });
 
 onUnmounted(() => {
   if (pomodoroIntervalId) clearInterval(pomodoroIntervalId);
   stopPomodoroPoll();
   window.removeEventListener("keydown", handleKeydown);
+  _unlistenUserShow?.();
+  _unlistenToggleTimer?.();
 });
 
 const HEADER_H = 45;
@@ -358,7 +432,74 @@ async function openMain() {
 }
 
 function hideFloat() {
+  // 用户手动隐藏：取消番茄钟自动隐藏倒计时，但保留 T1 周期
+  stopPomodoroPoll();
   getCurrentWindow().hide().catch(console.error);
+}
+
+// ── 计时 Tooltip ──
+const timerTip = ref<{ visible: boolean; sessions: TimeSession[]; y: number; x: number; w: number }>({
+  visible: false, sessions: [], y: 0, x: 0, w: 0,
+});
+let _tipHideTimer: ReturnType<typeof setTimeout> | null = null;
+let _baseItemCount = 0; // 记录展开前的条目数
+
+const TIP_ROW_H   = 24; // 每条记录高度估算
+const TIP_TITLE_H = 26; // 标题高度
+
+function showTimerTip(focusId: string, e: MouseEvent) {
+  if (_tipHideTimer) { clearTimeout(_tipHideTimer); _tipHideTimer = null; }
+  const target = e.currentTarget as HTMLElement;
+  const rect = target.getBoundingClientRect();
+  const sessions = [...store.getTimeSessions(focusId)];
+
+  // tooltip 宽度拉满整个悬浮窗口，左边留 4px
+  const w = window.innerWidth - 8;
+  const x = 4;
+  const tipTop = rect.bottom + 4;
+
+  // 估算 tooltip 高度
+  const tipH = TIP_TITLE_H + Math.max(1, sessions.length) * TIP_ROW_H + 16;
+  const neededWinH = tipTop + tipH + 4;
+
+  // 当窗口不够高时临时扩展
+  _baseItemCount = currentItemCount.value;
+  if (neededWinH > window.innerHeight) {
+    const scale = window.devicePixelRatio || 1;
+    invoke("resize_float_window", { height: Math.round(neededWinH * scale) }).catch(console.error);
+  }
+
+  timerTip.value = { visible: true, sessions, y: tipTop, x, w };
+}
+
+function hideTimerTip() {
+  _tipHideTimer = setTimeout(() => {
+    timerTip.value.visible = false;
+    adjustHeight(_baseItemCount); // 还原窗口高度
+  }, 120);
+}
+
+function formatSession(s: TimeSession): string {
+  const fmt = (iso: string) => {
+    const d = new Date(iso);
+    return d.toLocaleString('zh-CN', {
+      month: 'numeric', day: 'numeric',
+      hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+    });
+  };
+  return s.end ? `${fmt(s.start)} → ${fmt(s.end)}` : `${fmt(s.start)} → 进行中`;
+}
+
+function sessionDuration(s: TimeSession): string {
+  const end = s.end ? new Date(s.end) : new Date();
+  const ms = end.getTime() - new Date(s.start).getTime();
+  const totalSec = Math.floor(ms / 1000);
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const sec = totalSec % 60;
+  if (h > 0) return `${h}h${m}m`;
+  if (m > 0) return `${m}m${sec}s`;
+  return `${sec}s`;
 }
 
 function handleToggleComplete(task: (typeof store.focusTasks)[number]) {
@@ -588,6 +729,24 @@ function isOverdue(d: string) {
 }
 .remove-btn { color: var(--text-muted); }
 .remove-btn:hover { color: var(--danger); }
+
+/* 计时按钮 */
+.timer-wrap { position: relative; display: flex; align-items: center; }
+.timer-btn {
+  color: var(--text-muted);
+  font-size: 10px;
+  width: 22px;
+  height: 22px;
+  transition: color var(--transition), background var(--transition);
+}
+.timer-btn:hover { color: var(--accent); }
+.timer-btn.running {
+  color: var(--success);
+  background: rgba(124, 170, 144, 0.12);
+  border-radius: 4px;
+}
+
+/* 计时 Tooltip CSS 已迁移到全局 src/assets/index.css */
 
 /* ── 拆分视图 ── */
 .split-parent {

@@ -6,58 +6,73 @@
   --font: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
 
   /* ── Brand Palette ── */
-  --almond-silk:  #c5afa4;
-  --dusty-rose:   #cc7e85;
-  --dusty-mauve:  #a36d90;
-  --dusty-mauve-2:#8d778f;
-  --slate-grey:   #76818e;
+  --almond-silk: #c5afa4;
+  --dusty-rose: #cc7e85;
+  --dusty-mauve: #a36d90;
+  --dusty-mauve-2: #8d778f;
+  --slate-grey: #76818e;
 
   /* ── Backgrounds (浅色暖调) ── */
-  --bg-base:      #fdfbfb;  /* 带暖色倾向的极浅背景 */
-  --bg-deep:      #f5efeb;  /* 更深的杏仁奶色，用于侧边栏 */
-  --bg-elevated:  #ffffff;  /* 弹出层或纯白卡片 */
-  --bg-card:      #ffffff;
-  --bg-card-hover:#fbf7f6;
-  --bg-input:     #ffffff;
-  --bg-popover:   #ffffff;
+  --bg-base: #fdfbfb;
+  /* 带暖色倾向的极浅背景 */
+  --bg-deep: #f5efeb;
+  /* 更深的杏仁奶色，用于侧边栏 */
+  --bg-elevated: #ffffff;
+  /* 弹出层或纯白卡片 */
+  --bg-card: #ffffff;
+  --bg-card-hover: #fbf7f6;
+  --bg-input: #ffffff;
+  --bg-popover: #ffffff;
 
   /* ── Accent ── */
-  --accent:       var(--dusty-rose);
+  --accent: var(--dusty-rose);
   --accent-light: rgba(204, 126, 133, 0.12);
-  --accent-dim:   rgba(204, 126, 133, 0.08);
-  --accent-grad:  linear-gradient(135deg, var(--dusty-rose), var(--dusty-mauve));
+  --accent-dim: rgba(204, 126, 133, 0.08);
+  --accent-grad: linear-gradient(135deg, var(--dusty-rose), var(--dusty-mauve));
 
   /* ── Status ── */
-  --danger:   #c95f62;
-  --warning:  #c4905a;
-  --success:  #5e9375;
+  --danger: #c95f62;
+  --warning: #c4905a;
+  --success: #5e9375;
 
   /* ── Text (浅色背景下的深色文字) ── */
-  --text-primary:   #4a4242;   /* 深褐/深紫灰主文本 */
-  --text-secondary: #746c6e;   /* 中灰紫次要文本 */
-  --text-muted:     var(--slate-grey);   /* 提示或微弱文本 */
+  --text-primary: #4a4242;
+  /* 深褐/深紫灰主文本 */
+  --text-secondary: #746c6e;
+  /* 中灰紫次要文本 */
+  --text-muted: var(--slate-grey);
+  /* 提示或微弱文本 */
 
   /* ── Borders ── */
-  --border:       rgba(197, 175, 164, 0.40); /* 使用 almond-silk 作为基础边框 */
+  --border: rgba(197, 175, 164, 0.40);
+  /* 使用 almond-silk 作为基础边框 */
   --border-focus: rgba(204, 126, 133, 0.65);
 
   /* ── Radii ── */
   --radius-sm: 6px;
-  --radius:    10px;
+  --radius: 10px;
   --radius-lg: 16px;
 
   /* ── Shadows (浅色阴影) ── */
-  --shadow-float:   0 8px 30px rgba(74, 66, 66, 0.15), 0 0 0 1px rgba(197, 175, 164, 0.3);
-  --shadow-card:    0 2px 10px rgba(74, 66, 66, 0.06);
+  --shadow-float: 0 8px 30px rgba(74, 66, 66, 0.15), 0 0 0 1px rgba(197, 175, 164, 0.3);
+  --shadow-card: 0 2px 10px rgba(74, 66, 66, 0.06);
   --shadow-popover: 0 10px 40px rgba(74, 66, 66, 0.12);
 
   --transition: 0.18s ease;
 }
 
 /* ─── Reset ─── */
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
 
-html, body, #app {
+html,
+body,
+#app {
   height: 100%;
   font-family: var(--font);
   font-size: 14px;
@@ -68,10 +83,8 @@ html, body, #app {
 }
 
 /* ─── Scrollbar ─── */
-::-webkit-scrollbar { width: 4px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(197, 175, 164, 0.5); border-radius: 2px; }
-::-webkit-scrollbar-thumb:hover { background: var(--dusty-rose); }
+::-webkit-scrollbar { display: none; }
+
 
 /* ─── Buttons ─── */
 .btn {
@@ -89,24 +102,40 @@ html, body, #app {
   transition: var(--transition);
   white-space: nowrap;
 }
+
 .btn-primary {
   background: var(--accent-grad);
   color: #fff;
   box-shadow: 0 2px 10px rgba(204, 126, 133, 0.28);
 }
-.btn-primary:hover { opacity: 0.88; transform: translateY(-1px); }
+
+.btn-primary:hover {
+  opacity: 0.88;
+  transform: translateY(-1px);
+}
+
 .btn-ghost {
   background: transparent;
   color: var(--text-secondary);
   border: 1px solid var(--border);
 }
-.btn-ghost:hover { background: var(--bg-card-hover); color: var(--text-primary); border-color: var(--almond-silk); }
+
+.btn-ghost:hover {
+  background: var(--bg-card-hover);
+  color: var(--text-primary);
+  border-color: var(--almond-silk);
+}
+
 .btn-danger {
   background: rgba(201, 95, 98, 0.06);
   color: var(--danger);
   border: 1px solid rgba(201, 95, 98, 0.18);
 }
-.btn-danger:hover { background: rgba(201, 95, 98, 0.12); }
+
+.btn-danger:hover {
+  background: rgba(201, 95, 98, 0.12);
+}
+
 .btn-icon {
   padding: 4px;
   background: transparent;
@@ -122,11 +151,21 @@ html, body, #app {
   height: 26px;
   font-size: 13px;
 }
-.btn-icon:hover { color: var(--text-primary); background: var(--bg-card-hover); }
-.btn-icon.active { color: var(--dusty-rose); background: var(--accent-dim); }
+
+.btn-icon:hover {
+  color: var(--text-primary);
+  background: var(--bg-card-hover);
+}
+
+.btn-icon.active {
+  color: var(--dusty-rose);
+  background: var(--accent-dim);
+}
 
 /* ─── Inputs ─── */
-.input, .textarea, .select {
+.input,
+.textarea,
+.select {
   width: 100%;
   background: var(--bg-input);
   border: 1px solid var(--border);
@@ -138,15 +177,26 @@ html, body, #app {
   outline: none;
   transition: border-color var(--transition), box-shadow var(--transition);
 }
-.input:focus, .textarea:focus, .select:focus {
+
+.input:focus,
+.textarea:focus,
+.select:focus {
   border-color: var(--border-focus);
   box-shadow: 0 0 0 3px rgba(204, 126, 133, 0.1);
 }
+
 .input[type="datetime-local"]::-webkit-calendar-picker-indicator {
   cursor: pointer;
 }
-.textarea { resize: vertical; min-height: 72px; }
-.select option { background: var(--bg-popover); }
+
+.textarea {
+  resize: vertical;
+  min-height: 72px;
+}
+
+.select option {
+  background: var(--bg-popover);
+}
 
 /* ─── Badge urgency/importance ─── */
 .badge {
@@ -158,13 +208,26 @@ html, body, #app {
   font-weight: 600;
   letter-spacing: 0.02em;
 }
-.badge-high { background: rgba(201, 95, 98, 0.12);  color: var(--danger); }
-.badge-mid  { background: rgba(204, 126, 133, 0.15); color: var(--dusty-rose); }
-.badge-low  { background: rgba(118, 129, 142, 0.12); color: var(--slate-grey); }
+
+.badge-high {
+  background: rgba(201, 95, 98, 0.12);
+  color: var(--danger);
+}
+
+.badge-mid {
+  background: rgba(204, 126, 133, 0.15);
+  color: var(--dusty-rose);
+}
+
+.badge-low {
+  background: rgba(118, 129, 142, 0.12);
+  color: var(--slate-grey);
+}
 
 /* ─── Overlay / Modal ─── */
 .overlay {
-  position: fixed; inset: 0;
+  position: fixed;
+  inset: 0;
   background: rgba(74, 66, 66, 0.3);
   backdrop-filter: blur(4px);
   display: flex;
@@ -172,6 +235,7 @@ html, body, #app {
   justify-content: center;
   z-index: 1000;
 }
+
 .modal {
   background: var(--bg-popover);
   border: 1px solid var(--border);
@@ -179,10 +243,12 @@ html, body, #app {
   box-shadow: var(--shadow-popover);
   width: 480px;
   max-width: 95vw;
-  max-height: 85vh; /* 适配主界面高度 */
+  max-height: 85vh;
+  /* 适配主界面高度 */
   display: flex;
   flex-direction: column;
 }
+
 .modal-header {
   padding: 18px 20px 14px;
   border-bottom: 1px solid var(--border);
@@ -190,8 +256,22 @@ html, body, #app {
   align-items: center;
   justify-content: space-between;
 }
-.modal-title { font-size: 15px; font-weight: 600; color: var(--text-primary); }
-.modal-body { padding: 20px; display: flex; flex-direction: column; gap: 14px; overflow-y: auto; flex: 1; }
+
+.modal-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.modal-body {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+  flex: 1;
+}
+
 .modal-footer {
   padding: 14px 20px;
   border-top: 1px solid var(--border);
@@ -201,7 +281,12 @@ html, body, #app {
 }
 
 /* ─── Form field ─── */
-.field { display: flex; flex-direction: column; gap: 5px; }
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
 .field label {
   font-size: 11px;
   font-weight: 600;
@@ -211,7 +296,11 @@ html, body, #app {
 }
 
 /* ─── Pill toggle (urgency/importance) ─── */
-.pill-group { display: flex; gap: 4px; }
+.pill-group {
+  display: flex;
+  gap: 4px;
+}
+
 .pill {
   padding: 4px 12px;
   border-radius: 20px;
@@ -223,10 +312,29 @@ html, body, #app {
   cursor: pointer;
   transition: var(--transition);
 }
-.pill.active-high { background: rgba(201, 95, 98, 0.12); color: var(--danger);      border-color: rgba(201, 95, 98, 0.3); }
-.pill.active-mid  { background: rgba(204, 126, 133, 0.12); color: var(--dusty-rose); border-color: rgba(204, 126, 133, 0.3); }
-.pill.active-low  { background: rgba(118, 129, 142, 0.12); color: var(--slate-grey); border-color: rgba(118, 129, 142, 0.25); }
-.pill:hover:not(.active-high):not(.active-mid):not(.active-low) { background: var(--bg-card-hover); color: var(--text-primary); }
+
+.pill.active-high {
+  background: rgba(201, 95, 98, 0.12);
+  color: var(--danger);
+  border-color: rgba(201, 95, 98, 0.3);
+}
+
+.pill.active-mid {
+  background: rgba(204, 126, 133, 0.12);
+  color: var(--dusty-rose);
+  border-color: rgba(204, 126, 133, 0.3);
+}
+
+.pill.active-low {
+  background: rgba(118, 129, 142, 0.12);
+  color: var(--slate-grey);
+  border-color: rgba(118, 129, 142, 0.25);
+}
+
+.pill:hover:not(.active-high):not(.active-mid):not(.active-low) {
+  background: var(--bg-card-hover);
+  color: var(--text-primary);
+}
 
 /* ─── Quadrant labels ─── */
 .quadrant-label {
@@ -240,13 +348,90 @@ html, body, #app {
 
 /* ─── Animated entrance ─── */
 @keyframes fadeUp {
-  from { opacity: 0; transform: translateY(8px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
-.fade-up { animation: fadeUp 0.22s ease both; }
+
+.fade-up {
+  animation: fadeUp 0.22s ease both;
+}
 
 @keyframes fadeIn {
-  from { opacity: 0; }
-  to   { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
 }
-.fade-in { animation: fadeIn 0.18s ease both; }
+
+.fade-in {
+  animation: fadeIn 0.18s ease both;
+}
+
+/* ─── 计时 Tooltip（全局，Teleport 到 body）─── */
+.g-timer-tooltip {
+  position: fixed;
+  background: var(--bg-deep);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  z-index: 99999;
+  box-shadow: var(--shadow-popover);
+  pointer-events: none;
+  max-width: 320px;
+}
+
+.g-tt-title {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.g-tt-empty {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.g-tt-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+}
+
+.g-tt-row:last-child {
+  border-bottom: none;
+}
+
+.g-tt-idx {
+  color: var(--text-muted);
+  width: 20px;
+  flex-shrink: 0;
+}
+
+.g-tt-range {
+  flex: 1;
+  color: var(--text-secondary);
+  min-width: 0;
+}
+
+.g-tt-dur {
+  color: var(--accent);
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
