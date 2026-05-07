@@ -272,7 +272,7 @@ function handleKeydown(e: KeyboardEvent) {
   }
 
   // t 键：切换拆分视图
-  if (e.key === "t" && store.selectedIndex !== null) {
+  if (e.key === "t") {
     e.preventDefault();
     toggleSplitView();
     return;
