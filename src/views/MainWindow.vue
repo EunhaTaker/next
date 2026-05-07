@@ -30,10 +30,11 @@
       <nav class="sidebar-nav">
         <button
           class="nav-item"
-          :class="{ active: view === 'quadrant' }"
-          @click="view = 'quadrant'"
+          :class="{ active: view === 'all' }"
+          @click="view = 'all'"
         >
-          <span class="nav-icon">⊞</span> 四象限
+          <span class="nav-icon">☰</span> 全部任务
+          <span class="nav-badge" v-if="store.pendingTasks.length">{{ store.pendingTasks.length }}</span>
         </button>
         <button
           class="nav-item"
@@ -42,14 +43,6 @@
         >
           <span class="nav-icon">🎯</span> 专注任务
           <span class="nav-badge" v-if="store.focusTasks.length">{{ store.focusTasks.length }}</span>
-        </button>
-        <button
-          class="nav-item"
-          :class="{ active: view === 'all' }"
-          @click="view = 'all'"
-        >
-          <span class="nav-icon">☰</span> 全部任务
-          <span class="nav-badge" v-if="store.pendingTasks.length">{{ store.pendingTasks.length }}</span>
         </button>
         <button
           class="nav-item"
@@ -81,56 +74,8 @@
         </button>
       </div>
 
-      <!-- 四象限视图 -->
-      <div v-if="view === 'quadrant'" class="quadrant-grid">
-        <div
-          v-for="q in quadrantDefs"
-          :key="q.key"
-          class="quadrant-card"
-          :class="`q-${q.key}`"
-        >
-          <div class="q-header">
-            <span class="q-icon">{{ q.icon }}</span>
-            <div>
-              <div class="q-title">{{ q.title }}</div>
-              <div class="q-sub">{{ q.sub }}</div>
-            </div>
-          </div>
-          <div class="q-list">
-            <div
-              v-for="task in store.quadrants[q.key as keyof typeof store.quadrants]"
-              :key="task.id"
-              class="task-row"
-              @click="openEdit(task)"
-            >
-              <div class="task-row-check" @click.stop="store.toggleComplete(task.id)">
-                <div class="check-circle"></div>
-              </div>
-              <div class="task-row-info">
-                <span class="task-row-title">{{ task.title }}</span>
-                <span v-if="task.dueDate" class="task-row-due" :class="{ overdue: isOverdue(task.dueDate) }">
-                  {{ formatDate(task.dueDate) }}
-                </span>
-              </div>
-              <div class="task-row-actions" @click.stop>
-                <button
-                  class="btn-icon"
-                  :class="{ active: store.focusIds.includes(task.id) }"
-                  :title="store.focusIds.includes(task.id) ? '已在专注列表' : '加入专注'"
-                  @click="toggleFocus(task.id)"
-                >{{ store.focusIds.includes(task.id) ? '★' : '☆' }}</button>
-                <button class="btn-icon remove-btn" @click="store.deleteTask(task.id)" title="删除">×</button>
-              </div>
-            </div>
-            <div v-if="!store.quadrants[q.key as keyof typeof store.quadrants].length" class="q-empty">
-              暂无任务
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- 专注任务 / 全部 / 已完成 视图 -->
-      <div v-else-if="view !== 'settings'" class="task-list-view">
+      <!-- 任务列表视图 -->
+      <div v-if="view !== 'settings'" class="task-list-view">
         <template v-for="task in listViewTasks" :key="task.id">
           <!-- 任务卡片 -->
           <div
@@ -304,7 +249,7 @@ function maximizeWindow() { appWindow.toggleMaximize().catch(console.error); }
 function closeWindow() { appWindow.close().catch(console.error); }
 
 const store = useTaskStore();
-const view = ref<"quadrant" | "focus" | "all" | "done" | "settings">("quadrant");
+const view = ref<"focus" | "all" | "done" | "settings">("all");
 const editorOpen = ref(false);
 const editingTask = ref<Task | null>(null);
 
@@ -320,7 +265,6 @@ onMounted(async () => {
 });
 
 const viewTitle = computed(() => ({
-  quadrant: "四象限视图",
   focus: "专注任务",
   all: "全部任务",
   done: "已完成",
@@ -334,12 +278,7 @@ const listViewTasks = computed(() => {
   return store.pendingTasks; // all
 });
 
-const quadrantDefs = [
-  { key: "urgentImportant", icon: "🔥", title: "紧急重要", sub: "立即处理" },
-  { key: "urgentNotImportant", icon: "⚡", title: "紧急不重要", sub: "委托 / 快速处理" },
-  { key: "notUrgentImportant", icon: "📈", title: "重要不紧急", sub: "计划推进" },
-  { key: "neither", icon: "📦", title: "不紧急不重要", sub: "考虑降级" },
-];
+
 
 function openCreate() {
   editingTask.value = null;
@@ -546,12 +485,12 @@ function sessionDuration(s: TimeSession): string {
   position: relative;
 }
 .nav-item:hover { background: var(--bg-card); color: var(--text-primary); }
-.nav-item.active { background: var(--accent-dim); color: var(--accent-light); }
-.nav-icon { font-size: 14px; }
+.nav-item.active { background: var(--accent-dim); color: var(--accent); }
+.nav-icon { font-size: 14px; width: 18px; text-align: center; flex-shrink: 0; }
 .nav-badge {
   margin-left: auto;
   background: var(--accent-dim);
-  color: var(--accent-light);
+  color: var(--accent);
   border-radius: 10px;
   padding: 0 6px;
   font-size: 11px;

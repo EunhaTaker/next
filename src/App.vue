@@ -9,6 +9,7 @@ import FloatBar from "./views/FloatBar.vue";
 import MainWindow from "./views/MainWindow.vue";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { isRegistered, register } from "@tauri-apps/plugin-global-shortcut";
 import { emit } from "@tauri-apps/api/event";
 import { useTaskStore } from "./stores/tasks";
@@ -78,6 +79,33 @@ onMounted(async () => {
       }
     } catch (e) {
       console.warn(`❌ 快捷键 ${timerKey} 注册失败，可能与其他软件冲突:`, e);
+    }
+
+    // ctrl+alt+m：打开/关闭主界面
+    const mainKey = "CommandOrControl+Alt+M";
+    try {
+      if (!(await isRegistered(mainKey))) {
+        await register(mainKey, async (event) => {
+          if (event.state === "Pressed") {
+            const mainWin = await WebviewWindow.getByLabel("main").catch(() => null);
+            if (mainWin) {
+              mainWin.close().catch(console.error);
+            } else {
+              new WebviewWindow("main", {
+                url: "/?w=main",
+                title: "Next — 任务管理",
+                width: 720,
+                height: 560,
+                center: true,
+                decorations: false,
+              });
+            }
+          }
+        });
+        console.log(`✅ 快捷键注册成功: ${mainKey}`);
+      }
+    } catch (e) {
+      console.warn(`❌ 快捷键 ${mainKey} 注册失败，可能与其他软件冲突:`, e);
     }
   }
 });
