@@ -1,0 +1,4 @@
+[env]
+# 强制 cc crate 编译 C 代码时使用静态 CRT（/MT），
+# 与 Rust MSVC 目标的链接行为一致，避免 __imp_memchr 等符号找不到的链接错误
+CFLAGS = "/MT"
