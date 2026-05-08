@@ -69,9 +69,23 @@
       <!-- 顶部操作栏 -->
       <div class="main-topbar">
         <h1 class="main-title">{{ viewTitle }}</h1>
-        <button class="btn btn-primary" @click="openCreate">
+        <!-- 非 settings：新建任务按钮 -->
+        <button v-if="view !== 'settings'" class="btn btn-primary" @click="openCreate">
           <span>＋</span> 新建任务
         </button>
+        <!-- settings：子分页标签 -->
+        <div v-else class="settings-tabs">
+          <button
+            class="settings-tab"
+            :class="{ active: settingsTab === 'pomodoro' }"
+            @click="settingsTab = 'pomodoro'"
+          >⏱ 番茄钟</button>
+          <button
+            class="settings-tab"
+            :class="{ active: settingsTab === 'shortcuts' }"
+            @click="settingsTab = 'shortcuts'"
+          >⌨️ 快捷键</button>
+        </div>
       </div>
 
       <!-- 任务列表视图 -->
@@ -177,9 +191,8 @@
 
       <!-- 设置视图 -->
       <div v-if="view === 'settings'" class="settings-view fade-up">
-        <div class="settings-card fullscreen">
-          <h2 class="settings-section-title">⏱ 番茄土豆</h2>
-          
+        <!-- 番茄钟 -->
+        <div v-if="settingsTab === 'pomodoro'" class="settings-card fullscreen">
           <div class="settings-form">
             <div class="field">
               <label>每隔多少分钟显示一次悬浮窗？（0 为关闭功能）</label>
@@ -207,6 +220,33 @@
           <div class="settings-actions">
             <span class="hint" v-if="saveHint">{{ saveHint }}</span>
             <button class="btn btn-primary" @click="saveSettings">保存设置</button>
+          </div>
+        </div>
+
+        <!-- 快捷键 -->
+        <div v-if="settingsTab === 'shortcuts'" class="settings-card fullscreen">
+          <div class="shortcut-list">
+            <div v-for="item in shortcutItems" :key="item.key" class="shortcut-row">
+              <span class="shortcut-label">{{ item.label }}</span>
+              <div class="shortcut-input-wrap">
+                <input
+                  class="shortcut-input"
+                  :class="{ recording: recordingKey === item.key }"
+                  readonly
+                  :value="displayShortcut(localShortcuts[item.key])"
+                  :placeholder="recordingKey === item.key ? '请按下快捷键…' : '未设置'"
+                  @click="startRecord(item.key)"
+                  @keydown="onRecord($event, item.key)"
+                  @blur="recordingKey = null"
+                />
+              </div>
+              <button class="btn-sc" @click="resetShortcut(item.key)" title="重置为默认">重置</button>
+              <button class="btn-sc danger" @click="clearShortcut(item.key)" title="清除快捷键">清除</button>
+            </div>
+          </div>
+          <div class="settings-actions" style="margin-top: 16px;">
+            <span class="hint" v-if="scSaveHint">{{ scSaveHint }}</span>
+            <button class="btn btn-primary" @click="saveShortcutSettings">保存快捷键</button>
           </div>
         </div>
       </div>
@@ -240,7 +280,8 @@ import { ref, computed, onMounted } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useTaskStore } from "../stores/tasks";
 import TaskEditor from "../components/TaskEditor.vue";
-import type { Task, Level, TimeSession } from "../stores/tasks";
+import type { Task, Level, TimeSession, ShortcutConfig } from "../stores/tasks";
+import { DEFAULT_SHORTCUTS } from "../stores/tasks";
 
 const appWindow = getCurrentWindow();
 
@@ -250,6 +291,7 @@ function closeWindow() { appWindow.close().catch(console.error); }
 
 const store = useTaskStore();
 const view = ref<"focus" | "all" | "done" | "settings">("all");
+const settingsTab = ref<"pomodoro" | "shortcuts">("pomodoro");
 const editorOpen = ref(false);
 const editingTask = ref<Task | null>(null);
 
@@ -262,14 +304,15 @@ onMounted(async () => {
   await store.init();
   tempInterval.value = store.pomodoroInterval;
   tempDuration.value = store.pomodoroDuration;
+  localShortcuts.value = { ...store.shortcuts };
 });
 
-const viewTitle = computed(() => ({
-  focus: "专注任务",
-  all: "全部任务",
-  done: "已完成",
-  settings: "应用设置"
-}[view.value]));
+const viewTitle = computed(() => {
+  if (view.value === "settings") {
+    return settingsTab.value === "pomodoro" ? "番茄钟" : "快捷键";
+  }
+  return ({ focus: "专注任务", all: "全部任务", done: "已完成" } as Record<string, string>)[view.value] ?? "";
+});
 
 const listViewTasks = computed(() => {
   // focus 视图只取父任务（不展示子任务条目）
@@ -289,6 +332,75 @@ async function saveSettings() {
   await store.savePomodoroSettings(tempInterval.value, tempDuration.value);
   saveHint.value = "已保存";
   setTimeout(() => { saveHint.value = ""; }, 2000);
+}
+
+// ── 快捷键设置 ──
+const shortcutItems: { key: keyof ShortcutConfig; label: string }[] = [
+  { key: "toggleFloat",   label: "隐藏 / 显示悬浮窗" },
+  { key: "openMain",      label: "打开 / 关闭主界面" },
+  { key: "timer",         label: "开始 / 暂停计时" },
+  { key: "switchDesktop", label: "切换到对应桌面" },
+];
+const localShortcuts = ref<ShortcutConfig>({ ...DEFAULT_SHORTCUTS });
+const recordingKey = ref<keyof ShortcutConfig | null>(null);
+const scSaveHint = ref("");
+
+function displayShortcut(sc: string | null | undefined): string {
+  if (!sc) return "";
+  const isMac = navigator.platform.includes("Mac");
+  return sc
+    .replace("CommandOrControl", isMac ? "⌘" : "Ctrl")
+    .replace("Alt", isMac ? "⌥" : "Alt")
+    .replace("Shift", "⇧")
+    .replace(/\+/g, " + ");
+}
+
+function keyEventToShortcut(e: KeyboardEvent): string | null {
+  const mods: string[] = [];
+  if (e.ctrlKey || e.metaKey) mods.push("CommandOrControl");
+  if (e.altKey) mods.push("Alt");
+  if (e.shiftKey) mods.push("Shift");
+  const ignored = ["Control", "Alt", "Shift", "Meta", "AltGraph"];
+  if (ignored.includes(e.key)) return null;
+  const keyMap: Record<string, string> = {
+    " ": "Space", "\u00a0": "Space", // 普通空格 / Windows AltGr+Space 产生的不间断空格
+    "ArrowUp": "Up", "ArrowDown": "Down",
+    "ArrowLeft": "Left", "ArrowRight": "Right",
+    "Escape": "Escape", "Enter": "Return", "Tab": "Tab",
+    "Backspace": "Backspace", "Delete": "Delete",
+  };
+  const key = keyMap[e.key] ?? (e.key.length === 1 ? e.key.toUpperCase() : e.key);
+  if (!mods.length) return null; // 至少要有一个修饰键
+  return [...mods, key].join("+");
+}
+
+function startRecord(key: keyof ShortcutConfig) {
+  recordingKey.value = key;
+}
+
+function onRecord(e: KeyboardEvent, key: keyof ShortcutConfig) {
+  if (recordingKey.value !== key) return;
+  e.preventDefault();
+  if (e.key === "Escape") { recordingKey.value = null; return; }
+  const sc = keyEventToShortcut(e);
+  if (sc) {
+    localShortcuts.value = { ...localShortcuts.value, [key]: sc };
+    recordingKey.value = null;
+  }
+}
+
+function resetShortcut(key: keyof ShortcutConfig) {
+  localShortcuts.value = { ...localShortcuts.value, [key]: DEFAULT_SHORTCUTS[key] };
+}
+
+function clearShortcut(key: keyof ShortcutConfig) {
+  localShortcuts.value = { ...localShortcuts.value, [key]: null };
+}
+
+async function saveShortcutSettings() {
+  await store.saveShortcuts(localShortcuts.value);
+  scSaveHint.value = "已保存";
+  setTimeout(() => { scSaveHint.value = ""; }, 2000);
 }
 
 function openEdit(task: Task) {
@@ -808,5 +920,87 @@ function sessionDuration(s: TimeSession): string {
   background: rgba(94, 147, 117, 0.12);
   border-radius: 4px;
 }
+/* ─ 快捷键设置 ─ */
+.shortcut-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 540px;
+}
+.shortcut-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.shortcut-label {
+  width: 140px;
+  flex-shrink: 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.shortcut-input-wrap {
+  flex: 1;
+}
+.shortcut-input {
+  width: 100%;
+  padding: 6px 10px;
+  background: var(--bg-deep);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: var(--font);
+  font-size: 13px;
+  cursor: pointer;
+  outline: none;
+  transition: border-color var(--transition);
+}
+.shortcut-input:hover { border-color: var(--accent); }
+.shortcut-input.recording {
+  border-color: var(--accent);
+  background: rgba(204, 126, 133, 0.08);
+  animation: pulse-border 1s infinite;
+}
+@keyframes pulse-border {
+  0%, 100% { border-color: var(--accent); }
+  50%       { border-color: rgba(204, 126, 133, 0.4); }
+}
+.btn-sc {
+  padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-deep);
+  color: var(--text-secondary);
+  font-family: var(--font);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all var(--transition);
+}
+.btn-sc:hover { background: var(--bg-card); color: var(--text-primary); }
+.btn-sc.danger:hover { background: rgba(204, 126, 133, 0.12); color: var(--danger); border-color: var(--danger); }
+/* ─ 设置子分页 Tab ─ */
+.settings-tabs {
+  display: flex;
+  gap: 4px;
+  background: var(--bg-deep);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 3px;
+}
+.settings-tab {
+  padding: 5px 14px;
+  border-radius: 4px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition);
+  white-space: nowrap;
+}
+.settings-tab:hover { background: var(--bg-card); color: var(--text-primary); }
+.settings-tab.active { background: var(--accent-dim); color: var(--accent); }
 
 </style>

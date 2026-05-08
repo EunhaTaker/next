@@ -6,6 +6,20 @@ import type { UnlistenFn } from "@tauri-apps/api/event";
 
 export type Level = 1 | 2 | 3; // 1=低 2=中 3=高
 
+export interface ShortcutConfig {
+  toggleFloat:   string | null; // 隐藏/显示悬浮窗
+  openMain:      string | null; // 打开/关闭主界面
+  timer:         string | null; // 开始/暂停计时
+  switchDesktop: string | null; // 切换到对应桌面
+}
+
+export const DEFAULT_SHORTCUTS: ShortcutConfig = {
+  toggleFloat:   "CommandOrControl+Alt+H",
+  openMain:      "CommandOrControl+Alt+M",
+  timer:         "CommandOrControl+Alt+Space",
+  switchDesktop: "CommandOrControl+Alt+D",
+};
+
 export interface TimeSession {
   start: string; // ISO 8601
   end?: string;  // undefined 表示正在计时
@@ -108,6 +122,11 @@ CREATE TABLE IF NOT EXISTS settings (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS shortcuts (
+  key   TEXT PRIMARY KEY,
+  value TEXT
+);
 `;
 
 export const useTaskStore = defineStore("tasks", () => {
@@ -117,6 +136,7 @@ export const useTaskStore = defineStore("tasks", () => {
   const selectedIndex = ref<number | null>(null);
   const pomodoroInterval = ref(25);
   const pomodoroDuration = ref(5);
+  const shortcuts = ref<ShortcutConfig>({ ...DEFAULT_SHORTCUTS });
 
   let db: Database | null = null;
   let _unlistenSync: UnlistenFn | null = null;
@@ -293,13 +313,25 @@ export const useTaskStore = defineStore("tasks", () => {
     );
     focusIds.value = focusRows.map(r => r.focus_id);
 
-    // 设置
+    // 番茄钟设置
     const settings = await db.select<{ key: string; value: string }[]>(
       "SELECT key, value FROM settings"
     );
     for (const s of settings) {
       if (s.key === "pomodoro_interval") pomodoroInterval.value = Number(s.value);
       if (s.key === "pomodoro_duration") pomodoroDuration.value = Number(s.value);
+    }
+
+    // 快捷键（独立表，每项一行）
+    const scRows = await db.select<{ key: string; value: string | null }[]>(
+      "SELECT key, value FROM shortcuts"
+    );
+    if (scRows.length > 0) {
+      const merged: Partial<ShortcutConfig> = {};
+      for (const r of scRows) {
+        (merged as Record<string, string | null>)[r.key] = r.value;
+      }
+      shortcuts.value = { ...DEFAULT_SHORTCUTS, ...merged };
     }
   }
 
@@ -528,6 +560,22 @@ export const useTaskStore = defineStore("tasks", () => {
     notifyOthers();
   }
 
+  async function saveShortcuts(sc: ShortcutConfig) {
+    if (!db) return;
+    shortcuts.value = { ...sc };
+    // 每项快捷键写入独立的 shortcuts 表（value 为 null 表示已清除）
+    const entries = Object.entries(sc) as [string, string | null][];
+    for (const [key, value] of entries) {
+      await db.execute(
+        "INSERT OR REPLACE INTO shortcuts(key, value) VALUES (?, ?)",
+        [key, value]
+      );
+    }
+
+    emit("shortcuts-changed").catch(() => {});
+    notifyOthers();
+  }
+
   // ── 计时功能（同步从内存读，DB 写通过 toggleTimer）──
   function isTimerRunning(focusId: string): boolean {
     const sessions = getTimeSessions(focusId);
@@ -656,6 +704,9 @@ export const useTaskStore = defineStore("tasks", () => {
     pomodoroInterval,
     pomodoroDuration,
     savePomodoroSettings,
+    shortcuts,
+    saveShortcuts,
+    reload,
     resolveFocusId,
     isTimerRunning,
     getTimeSessions,
