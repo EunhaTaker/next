@@ -11,7 +11,6 @@
           title="拆分视图 (t)"
           @click="toggleSplitView"
         >⊟</button>
-        <button class="btn-icon" :title="side === 'right' ? '贴靠左侧' : '贴靠右侧'" @click="snapSide">{{ side === 'right' ? '⟵' : '⟶' }}</button>
         <button class="btn-icon" title="打开管理窗口" @click="openMain">⊞</button>
         <button class="btn-icon" title="隐藏悬浮窗" @click="hideFloat">−</button>
       </div>
@@ -523,12 +522,6 @@ function adjustHeight(count: number) {
 }
 
 watch(currentItemCount, (n) => adjustHeight(n));
-
-function snapSide() {
-  const target = side.value === 'right' ? 'left' : 'right';
-  side.value = target;
-  invoke('snap_float_window', { side: target }).catch(console.error);
-}
 
 async function openMain() {
   try {
